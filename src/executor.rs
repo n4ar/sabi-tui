@@ -821,4 +821,93 @@ mod tests {
         let no_matches = detector.matching_patterns("ls -la");
         assert!(no_matches.is_empty());
     }
+
+    // **Feature: Sabi-TUI, Property: Interactive Command Detection - Editors**
+    #[test]
+    fn test_interactive_editors_detected() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(detector.is_interactive("nano file.txt"));
+        assert!(detector.is_interactive("vim file.txt"));
+        assert!(detector.is_interactive("vi file.txt"));
+        assert!(detector.is_interactive("emacs file.txt"));
+    }
+
+    // **Feature: Sabi-TUI, Property: Interactive Command Detection - Remote**
+    #[test]
+    fn test_interactive_remote_detected() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(detector.is_interactive("ssh user@host"));
+        assert!(detector.is_interactive("telnet host"));
+        assert!(detector.is_interactive("ftp host"));
+    }
+
+    // **Feature: Sabi-TUI, Property: Interactive Command Detection - Pagers**
+    #[test]
+    fn test_interactive_pagers_detected() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(detector.is_interactive("htop"));
+        assert!(detector.is_interactive("top"));
+        assert!(detector.is_interactive("less file.txt"));
+        assert!(detector.is_interactive("more file.txt"));
+        assert!(detector.is_interactive("man ls"));
+    }
+
+    // **Feature: Sabi-TUI, Property: Interactive Command Detection - Docker**
+    #[test]
+    fn test_interactive_docker_detected() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(detector.is_interactive("docker run -it ubuntu"));
+        assert!(detector.is_interactive("podman run -it alpine"));
+    }
+
+    // **Feature: Sabi-TUI, Property: Non-Interactive Commands Pass**
+    #[test]
+    fn test_non_interactive_commands_pass() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(!detector.is_interactive("ls -la"));
+        assert!(!detector.is_interactive("cat file.txt"));
+        assert!(!detector.is_interactive("grep pattern file"));
+        assert!(!detector.is_interactive("find . -name '*.rs'"));
+        assert!(!detector.is_interactive("docker ps"));
+        assert!(!detector.is_interactive("python3 script.py"));
+    }
+
+    // **Feature: Sabi-TUI, Property: Interactive Suggestions**
+    #[test]
+    fn test_interactive_suggestions() {
+        let detector = InteractiveCommandDetector::new();
+        
+        assert!(detector.suggestion("nano").is_some());
+        assert!(detector.suggestion("vim").is_some());
+        assert!(detector.suggestion("less").is_some());
+        assert!(detector.suggestion("htop").is_some());
+        assert!(detector.suggestion("ssh").is_some());
+        assert!(detector.suggestion("ls").is_none());
+    }
+
+    // **Feature: Sabi-TUI, Property: Interactive Detection with Whitespace**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(50))]
+
+        #[test]
+        fn prop_interactive_detection_ignores_leading_whitespace(
+            spaces in "[ \\t]{0,5}",
+            editor in prop_oneof![Just("nano"), Just("vim"), Just("vi")]
+        ) {
+            let detector = InteractiveCommandDetector::new();
+            let cmd = format!("{}{} file.txt", spaces, editor);
+            
+            // Should still detect after trimming
+            prop_assert!(
+                detector.is_interactive(&cmd),
+                "Should detect interactive command with leading whitespace: '{}'",
+                cmd
+            );
+        }
+    }
 }

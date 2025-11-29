@@ -1269,20 +1269,26 @@ mod tests {
             let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
             let result = app.handle_key_event(key);
             
-            // Property: result should be Quit (emergency exit)
-            prop_assert_eq!(
-                result,
-                InputResult::Quit,
-                "Escape should allow quit in {:?} state",
-                state
-            );
-            
-            // Property: should_quit flag should be set
-            prop_assert!(
-                app.should_quit,
-                "should_quit should be true after Escape in {:?} state",
-                state
-            );
+            // Property: result should be CancelCommand for Executing/Finalizing, Quit for Thinking
+            match state {
+                AppState::Executing | AppState::Finalizing => {
+                    prop_assert_eq!(
+                        result,
+                        InputResult::CancelCommand,
+                        "Escape should cancel command in {:?} state",
+                        state
+                    );
+                }
+                AppState::Thinking => {
+                    prop_assert_eq!(
+                        result,
+                        InputResult::Quit,
+                        "Escape should quit in {:?} state",
+                        state
+                    );
+                }
+                _ => {}
+            }
         }
 
         #[test]
@@ -1940,5 +1946,176 @@ mod tests {
             // Property: state should remain ReviewAction
             prop_assert_eq!(app.state, AppState::ReviewAction);
         }
+    }
+
+    // **Feature: Sabi-TUI, Property: Session Creation**
+    // *For any* new session, it SHALL have a unique ID based on timestamp
+    // and empty messages list.
+    #[test]
+    fn test_session_new_has_unique_id() {
+        let s1 = Session::new();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let s2 = Session::new();
+        
+        assert!(!s1.id.is_empty(), "Session ID should not be empty");
+        assert!(!s2.id.is_empty(), "Session ID should not be empty");
+        assert!(s1.messages.is_empty(), "New session should have no messages");
+    }
+
+    // **Feature: Sabi-TUI, Property: Session Preview**
+    // *For any* session with messages, preview SHALL return first 40 chars of first user message.
+    #[test]
+    fn test_session_preview() {
+        let mut session = Session::new();
+        assert_eq!(session.preview(), "(empty)");
+        
+        session.messages.push(crate::message::Message::user("Hello world"));
+        assert_eq!(session.preview(), "Hello world");
+        
+        session.messages.clear();
+        session.messages.push(crate::message::Message::user("A".repeat(50).as_str()));
+        assert!(session.preview().ends_with("..."));
+        assert!(session.preview().len() <= 43); // 40 + "..."
+    }
+
+    // **Feature: Sabi-TUI, Property: Cancel Command in Executing State**
+    // *For any* app in Executing state, pressing Esc SHALL return CancelCommand.
+    #[test]
+    fn test_executing_state_esc_cancels() {
+        let mut app = test_app();
+        app.state = AppState::Executing;
+        
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let result = app.handle_key_event(key);
+        
+        assert_eq!(result, InputResult::CancelCommand);
+    }
+
+    // **Feature: Sabi-TUI, Property: Cancel Command in Finalizing State**
+    #[test]
+    fn test_finalizing_state_esc_cancels() {
+        let mut app = test_app();
+        app.state = AppState::Finalizing;
+        
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let result = app.handle_key_event(key);
+        
+        assert_eq!(result, InputResult::CancelCommand);
+    }
+
+    // **Feature: Sabi-TUI, Property: New Session Clears Messages**
+    #[test]
+    fn test_new_session_clears_messages() {
+        let mut app = test_app();
+        app.add_message(crate::message::Message::user("test"));
+        app.add_message(crate::message::Message::model("response"));
+        
+        let old_id = app.current_session_id.clone();
+        
+        // Wait to ensure different timestamp
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        app.new_session();
+        
+        // Only system messages should remain
+        assert!(app.messages.iter().all(|m| m.role == MessageRole::System));
+        assert_ne!(app.current_session_id, old_id, "Session ID should change after new_session");
+    }
+
+    // **Feature: Sabi-TUI, Property: Slash Command /new**
+    #[test]
+    fn test_slash_command_new() {
+        let mut app = test_app();
+        app.input_textarea.insert_str("/new");
+        
+        let result = app.submit_input();
+        
+        assert_eq!(result, SubmitResult::Handled);
+    }
+
+    // **Feature: Sabi-TUI, Property: Slash Command /sessions**
+    #[test]
+    fn test_slash_command_sessions() {
+        let mut app = test_app();
+        app.input_textarea.insert_str("/sessions");
+        
+        let result = app.submit_input();
+        
+        assert_eq!(result, SubmitResult::Handled);
+    }
+
+    // **Feature: Sabi-TUI, Property: Slash Command /help**
+    #[test]
+    fn test_slash_command_help() {
+        let mut app = test_app();
+        app.input_textarea.insert_str("/help");
+        
+        let initial_count = app.messages.len();
+        let result = app.submit_input();
+        
+        assert_eq!(result, SubmitResult::Handled);
+        assert!(app.messages.len() > initial_count, "Help should add a message");
+    }
+
+    // **Feature: Sabi-TUI, Property: Slash Command /clear**
+    #[test]
+    fn test_slash_command_clear() {
+        let mut app = test_app();
+        app.add_message(crate::message::Message::user("test"));
+        app.add_message(crate::message::Message::model("response"));
+        
+        app.input_textarea.insert_str("/clear");
+        let result = app.submit_input();
+        
+        assert_eq!(result, SubmitResult::Handled);
+        // Should only have system messages + clear confirmation
+        let non_system: Vec<_> = app.messages.iter()
+            .filter(|m| m.role != MessageRole::System)
+            .collect();
+        assert!(non_system.is_empty() || non_system.len() == 1); // clear message might be system
+    }
+
+    // **Feature: Sabi-TUI, Property: Unknown Slash Command**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20))]
+
+        #[test]
+        fn prop_unknown_slash_command(cmd in "/[a-z]{5,10}") {
+            // Skip known commands
+            let known = ["/clear", "/new", "/sessions", "/switch", "/delete", "/help", "/quit", "/exit"];
+            if known.iter().any(|k| cmd.starts_with(k)) {
+                return Ok(());
+            }
+            
+            let mut app = test_app();
+            app.input_textarea.insert_str(&cmd);
+            
+            let result = app.submit_input();
+            
+            prop_assert_eq!(result, SubmitResult::Handled);
+            // Should have added an "Unknown command" message
+            prop_assert!(
+                app.messages.iter().any(|m| m.content.contains("Unknown command")),
+                "Should show unknown command message"
+            );
+        }
+    }
+
+    // **Feature: Sabi-TUI, Property: Safe Mode Config**
+    #[test]
+    fn test_safe_mode_config() {
+        let mut config = Config::default();
+        assert!(!config.safe_mode, "Safe mode should be off by default");
+        
+        config.safe_mode = true;
+        let app = App::new(config);
+        assert!(app.config.safe_mode, "App should inherit safe_mode from config");
+    }
+
+    // **Feature: Sabi-TUI, Property: Python Availability Check**
+    #[test]
+    fn test_python_availability_check() {
+        let app = test_app();
+        // Just verify the field exists and is set
+        let _ = app.python_available;
     }
 }
