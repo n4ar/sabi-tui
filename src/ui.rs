@@ -189,6 +189,11 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
     let content_width = area.width.saturating_sub(4) as usize; // borders + padding
     
     for message in &app.messages {
+        // Skip system prompt (first system message with tools definition)
+        if message.role == MessageRole::System && message.content.contains("MUST use tools") {
+            continue;
+        }
+        
         let (prefix, style) = get_message_style(&message.role);
         
         // Add prefix line
