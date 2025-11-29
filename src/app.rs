@@ -115,6 +115,8 @@ impl<'a> App<'a> {
     /// Add a message to the conversation history
     pub fn add_message(&mut self, message: Message) {
         self.messages.push(message);
+        // Reset scroll to show latest message
+        self.scroll_offset = 0;
     }
 
     /// Clear the error message
@@ -1395,5 +1397,244 @@ mod tests {
         
         assert_eq!(app.state, AppState::ReviewAction);
         assert_eq!(app.get_action_text(), "cat output.txt");
+    }
+
+    // **Feature: agent-rs, Property 11: Message History Append**
+    // *For any* sequence of messages added to the history, the messages SHALL be
+    // appended in order, and the scroll position SHALL reset to show the latest message.
+    // **Validates: Requirements 6.1**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_message_history_append_order(
+            messages in prop::collection::vec(
+                (prop::bool::ANY, "[a-zA-Z0-9 ]{1,50}"),
+                1..10
+            )
+        ) {
+            let mut app = test_app();
+            let initial_count = app.messages.len();
+            
+            // Add messages
+            for (is_user, content) in &messages {
+                let msg = if *is_user {
+                    crate::message::Message::user(content)
+                } else {
+                    crate::message::Message::model(content)
+                };
+                app.add_message(msg);
+            }
+            
+            // Property: message count should increase by the number added
+            prop_assert_eq!(
+                app.messages.len(),
+                initial_count + messages.len(),
+                "Message count should increase by number of messages added"
+            );
+            
+            // Property: messages should be in the same order
+            for (i, (is_user, content)) in messages.iter().enumerate() {
+                let msg = &app.messages[initial_count + i];
+                let expected_role = if *is_user {
+                    crate::message::MessageRole::User
+                } else {
+                    crate::message::MessageRole::Model
+                };
+                prop_assert_eq!(
+                    &msg.role, &expected_role,
+                    "Message role should match at index {}", i
+                );
+                prop_assert_eq!(
+                    &msg.content, content,
+                    "Message content should match at index {}", i
+                );
+            }
+        }
+
+        #[test]
+        fn prop_message_append_resets_scroll(
+            content in "[a-zA-Z0-9 ]{1,50}"
+        ) {
+            let mut app = test_app();
+            
+            // Set scroll offset to non-zero
+            app.scroll_offset = 10;
+            
+            // Add a message
+            app.add_message(crate::message::Message::user(&content));
+            
+            // Property: scroll should reset to 0 (showing latest)
+            prop_assert_eq!(
+                app.scroll_offset, 0,
+                "Scroll offset should reset to 0 after adding message"
+            );
+        }
+
+        #[test]
+        fn prop_message_history_preserves_previous(
+            initial_msg in "[a-zA-Z0-9 ]{1,50}",
+            new_msg in "[a-zA-Z0-9 ]{1,50}"
+        ) {
+            let mut app = test_app();
+            
+            // Add initial message
+            app.add_message(crate::message::Message::user(&initial_msg));
+            let first_count = app.messages.len();
+            
+            // Add new message
+            app.add_message(crate::message::Message::model(&new_msg));
+            
+            // Property: previous messages should be preserved
+            prop_assert_eq!(
+                app.messages.len(),
+                first_count + 1,
+                "Message count should increase by 1"
+            );
+            
+            // Property: first message should still be there
+            prop_assert_eq!(
+                &app.messages[first_count - 1].content,
+                &initial_msg,
+                "Previous message should be preserved"
+            );
+            
+            // Property: new message should be last
+            prop_assert_eq!(
+                &app.messages.last().unwrap().content,
+                &new_msg,
+                "New message should be last"
+            );
+        }
+    }
+
+    // Strategy to generate textarea edit operations
+    #[derive(Debug, Clone)]
+    enum TextOp {
+        Insert(char),
+        Delete,
+        Left,
+        Right,
+        Home,
+        End,
+    }
+
+    fn arb_text_op() -> impl Strategy<Value = TextOp> {
+        prop_oneof![
+            "[a-zA-Z0-9 ]".prop_map(|s| TextOp::Insert(s.chars().next().unwrap())),
+            Just(TextOp::Delete),
+            Just(TextOp::Left),
+            Just(TextOp::Right),
+            Just(TextOp::Home),
+            Just(TextOp::End),
+        ]
+    }
+
+    // **Feature: agent-rs, Property 7: Textarea Edit Consistency**
+    // *For any* sequence of valid text editing operations (insert, delete, cursor move)
+    // on a TextArea, the resulting content SHALL reflect all operations applied in order.
+    // **Validates: Requirements 3.2**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_textarea_edit_consistency(
+            ops in prop::collection::vec(arb_text_op(), 1..50)
+        ) {
+            let mut textarea = TextArea::default();
+            let mut expected = String::new();
+            let mut cursor: usize = 0;
+
+            for op in &ops {
+                match op {
+                    TextOp::Insert(ch) => {
+                        textarea.insert_char(*ch);
+                        expected.insert(cursor, *ch);
+                        cursor += 1;
+                    }
+                    TextOp::Delete => {
+                        textarea.delete_char();
+                        if cursor > 0 {
+                            cursor -= 1;
+                            expected.remove(cursor);
+                        }
+                    }
+                    TextOp::Left => {
+                        textarea.move_cursor(tui_textarea::CursorMove::Back);
+                        cursor = cursor.saturating_sub(1);
+                    }
+                    TextOp::Right => {
+                        textarea.move_cursor(tui_textarea::CursorMove::Forward);
+                        if cursor < expected.len() {
+                            cursor += 1;
+                        }
+                    }
+                    TextOp::Home => {
+                        textarea.move_cursor(tui_textarea::CursorMove::Head);
+                        cursor = 0;
+                    }
+                    TextOp::End => {
+                        textarea.move_cursor(tui_textarea::CursorMove::End);
+                        cursor = expected.len();
+                    }
+                }
+            }
+
+            let actual: String = textarea.lines().join("\n");
+            prop_assert_eq!(
+                actual, expected,
+                "Textarea content should match expected after operations"
+            );
+        }
+
+        #[test]
+        fn prop_input_textarea_edit_consistency(
+            initial in "[a-zA-Z0-9]{0,10}",
+            ops in prop::collection::vec(arb_text_op(), 1..20)
+        ) {
+            let mut app = test_app();
+            app.state = AppState::Input;
+            app.input_textarea.insert_str(&initial);
+
+            for op in &ops {
+                let key = match op {
+                    TextOp::Insert(ch) => KeyEvent::new(KeyCode::Char(*ch), KeyModifiers::NONE),
+                    TextOp::Delete => KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                    TextOp::Left => KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+                    TextOp::Right => KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+                    TextOp::Home => KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+                    TextOp::End => KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+                };
+                app.handle_key_event(key);
+            }
+
+            // Property: state should remain Input
+            prop_assert_eq!(app.state, AppState::Input);
+        }
+
+        #[test]
+        fn prop_action_textarea_edit_consistency(
+            initial in "[a-zA-Z0-9]{0,10}",
+            ops in prop::collection::vec(arb_text_op(), 1..20)
+        ) {
+            let mut app = test_app();
+            app.state = AppState::ReviewAction;
+            app.action_textarea.insert_str(&initial);
+
+            for op in &ops {
+                let key = match op {
+                    TextOp::Insert(ch) => KeyEvent::new(KeyCode::Char(*ch), KeyModifiers::NONE),
+                    TextOp::Delete => KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                    TextOp::Left => KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+                    TextOp::Right => KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+                    TextOp::Home => KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+                    TextOp::End => KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+                };
+                app.handle_key_event(key);
+            }
+
+            // Property: state should remain ReviewAction
+            prop_assert_eq!(app.state, AppState::ReviewAction);
+        }
     }
 }

@@ -59,7 +59,7 @@ pub struct Config {
 }
 
 fn default_model() -> String {
-    "gemini-1.5-flash".to_string()
+    "gemini-2.5-flash".to_string()
 }
 
 fn default_max_history() -> usize {
