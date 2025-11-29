@@ -1,179 +1,208 @@
-# agent-rs
+# Sabi-TUI
 
 A terminal-based AI agent implementing the ReAct (Reasoning + Acting) pattern for system administration. Describe tasks in natural language, review AI-generated shell commands, and get analysis of results.
 
 ## Features
 
-- Natural language to shell command translation
-- Command review and editing before execution
-- Output capture and AI-powered analysis
-- Dangerous command detection with visual warnings
-- Conversation history for context-aware interactions
-
-## Requirements
-
-- Rust 2024 edition
-- Gemini API key (get one at https://aistudio.google.com/apikey)
+- 🧠 **Gemini AI powered** - Natural language to shell command translation
+- 💻 **Terminal access** - Execute commands with safety checks
+- 🐍 **Python executor** - Run Python code for calculations (auto-detected)
+- 🔒 **Safe mode** - Preview commands without execution
+- 💾 **Multi-session** - Save and switch between conversation sessions
+- ⚠️ **Dangerous command detection** - Visual warnings for risky commands
+- 🚫 **Interactive command blocking** - Prevents hanging on vim, ssh, etc.
 
 ## Installation
 
+### Quick Install (Recommended)
+
+Downloads pre-built binary automatically:
+
 ```bash
-git clone <repository-url>
-cd agent-rs
-cargo build --release
+curl -sSL https://raw.githubusercontent.com/n4ar/sabi-tui/main/setup.sh | bash
 ```
+
+### Manual Download
+
+Download from [Releases](https://github.com/n4ar/sabi-tui/releases):
+
+| Platform | Binary |
+|----------|--------|
+| macOS (Apple Silicon) | `sabi-macos-aarch64` |
+| macOS (Intel) | `sabi-macos-x86_64` |
+| Linux (x64) | `sabi-linux-x86_64` |
+| Linux (ARM64) | `sabi-linux-aarch64` |
+| Windows | `sabi-windows-x86_64.exe` |
+
+```bash
+# Example for macOS Apple Silicon
+curl -L https://github.com/n4ar/sabi-tui/releases/latest/download/sabi-macos-aarch64 -o sabi
+chmod +x sabi
+mv sabi ~/.local/bin/
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/n4ar/sabi-tui.git
+cd sabi-tui
+cargo build --release
+cp target/release/sabi ~/.local/bin/
+```
+
+## Requirements
+
+- Gemini API key ([Get one here](https://aistudio.google.com/apikey))
 
 ## Configuration
 
-### Option 1: Environment Variable (Recommended for quick start)
+### Option 1: Environment Variable
 
 ```bash
-export GEMINI_API_KEY="your-gemini-api-key"
+export SABI_API_KEY="your-gemini-api-key"
 ```
 
 ### Option 2: Config File
 
-Create `~/.config/agent-rs/config.toml`:
+Edit `~/.config/sabi/config.toml`:
 
 ```toml
 api_key = "your-gemini-api-key"
-model = "gemini-2.5-flash"           # optional, default: gemini-2.5-flash
-max_history_messages = 20            # optional, conversation context limit
-max_output_bytes = 10000             # optional, command output truncation
-max_output_lines = 100               # optional, command output line limit
-dangerous_patterns = ["rm -rf", "mkfs", "dd if=", "> /dev/"]  # optional
+model = "gemini-2.5-flash"           # optional
+max_history_messages = 20            # optional
+safe_mode = false                    # optional
+dangerous_patterns = ["rm -rf", "mkfs", "dd if="]  # optional
 ```
 
 ## Usage
 
-### Starting the Application
-
 ```bash
-# If built with --release
-./target/release/agent-rs
+# Normal mode
+sabi
 
-# Or run directly with cargo
-cargo run --release
+# Safe mode (preview only, no execution)
+sabi --safe
+
+# Help
+sabi --help
 ```
 
 ### Basic Workflow
 
-1. **Type your query** in natural language at the input prompt
+1. **Type your query** in natural language
    ```
-   > list all files larger than 100MB in home directory
-   ```
-
-2. **Review the proposed command** - AI will suggest a shell command
-   ```
-   ┌─ Command (Enter to execute, Esc to cancel) ─┐
-   │ find ~ -type f -size +100M -exec ls -lh {} \;│
-   └──────────────────────────────────────────────┘
+   > list all files larger than 100MB
    ```
 
-3. **Edit if needed** - You can modify the command before execution
+2. **Review the proposed command**
+   ```
+   ┌─ Command ─────────────────────────────┐
+   │ find ~ -type f -size +100M            │
+   └───────────────────────────────────────┘
+   ```
 
-4. **Execute or Cancel**
-   - Press `Enter` to execute the command
-   - Press `Esc` to cancel and return to input
+3. **Execute or Cancel**
+   - `Enter` - Execute the command
+   - `Esc` - Cancel and return to input
 
-5. **View results** - The output is captured and analyzed by AI
+4. **View AI analysis** of the results
 
-6. **Continue the conversation** - Ask follow-up questions with context preserved
+### Slash Commands
 
-### Example Session
-
-```
-You: show disk usage of current directory
-AI: I'll check the disk usage for you.
-
-┌─ Command ─────────────────────────┐
-│ du -sh ./*                        │
-└───────────────────────────────────┘
-
-[Press Enter to execute]
-
-Output:
-4.0K    ./Cargo.toml
-156M    ./target
-12K     ./src
-
-AI: The current directory uses about 156MB total, mostly from the 
-    target/ build directory. The source code in src/ is only 12KB.
-
-You: clean up the build artifacts
-...
-```
-
-### Dangerous Command Warning
-
-Commands matching dangerous patterns (like `rm -rf`) will show a red warning:
-
-```
-┌─ ⚠ DANGEROUS COMMAND - Review Carefully! ─┐
-│ rm -rf ./target                            │
-└────────────────────────────────────────────┘
-```
+| Command | Description |
+|---------|-------------|
+| `/new` | Start new session |
+| `/sessions` | List all sessions |
+| `/switch <id>` | Switch to session |
+| `/delete <id>` | Delete session |
+| `/clear` | Clear chat history |
+| `/help` | Show help |
+| `/quit` | Exit |
 
 ### Keybindings
 
 | State | Key | Action |
 |-------|-----|--------|
-| Input | `Enter` | Submit query to AI |
-| Input | `Esc` | Quit application |
-| Input | `↑`/`↓` | Scroll chat history |
-| Input | Any key | Type in input field |
-| Review | `Enter` | Execute the command |
-| Review | `Esc` | Cancel and return to input |
-| Review | Any key | Edit the command |
-| Thinking/Executing | `Esc` | Emergency quit |
+| Input | `Enter` | Submit query |
+| Input | `Esc` | Quit |
+| Input | `↑`/`↓` | Scroll history |
+| Review | `Enter` | Execute command |
+| Review | `Esc` | Cancel |
+| Executing | `Esc` | Cancel command |
 | Any | `Ctrl+C` | Force quit |
 
-### UI Layout
+### Status Bar Indicators
+
+| Icon | Meaning |
+|------|---------|
+| 🐍 | Python available |
+| 🔒 SAFE | Safe mode enabled |
+
+## Safety Features
+
+### Dangerous Command Warning
+
+Commands matching dangerous patterns show a red warning:
 
 ```
-┌─────────────────────────────────────┐
-│           Chat History              │  ← Conversation with AI
-│  You: list files                    │
-│  AI: Here are the files...          │
-├─────────────────────────────────────┤
-│  Command / Output / Spinner         │  ← Context-dependent middle pane
-├─────────────────────────────────────┤
-│ [INPUT] Enter: Submit | Esc: Quit   │  ← Status bar with keybindings
-└─────────────────────────────────────┘
+┌─ ⚠ DANGEROUS COMMAND ─────────────────┐
+│ rm -rf ./node_modules                  │
+└────────────────────────────────────────┘
+```
+
+### Interactive Command Blocking
+
+Interactive commands (vim, ssh, htop, etc.) are blocked with suggestions:
+
+```
+⚠️ Cannot run interactive command: `vim file.txt`
+Use write_file tool instead
 ```
 
 ## Architecture
 
 ```
 Input → Thinking → ReviewAction → Executing → Finalizing → Input
-          ↓              ↓
-        (text)       (cancel)
-          ↓              ↓
-        Input ←──────────┘
+          ↓              ↓             ↓
+        (text)       (cancel)     (cancel)
+          ↓              ↓             ↓
+        Input ←──────────┴─────────────┘
 ```
 
-The app follows a state machine pattern with async event handling for responsive UI during API calls and command execution.
+## Available Tools
 
-### States
+The AI can use these tools:
 
-| State | Description |
-|-------|-------------|
-| Input | Waiting for user query |
-| Thinking | AI is processing the request |
-| ReviewAction | Displaying command for user review |
-| Executing | Running the shell command |
-| Finalizing | AI is analyzing command output |
+| Tool | Description |
+|------|-------------|
+| `run_cmd` | Execute shell command |
+| `run_python` | Execute Python code |
+| `read_file` | Read file contents |
+| `write_file` | Write to file |
+| `search` | Search for files |
 
 ## Troubleshooting
 
 ### "API key not found"
-Set the `GEMINI_API_KEY` environment variable or create a config file.
+Set `SABI_API_KEY` environment variable or edit `~/.config/sabi/config.toml`
 
 ### "Terminal too small"
-Resize your terminal to at least 40x10 characters.
+Resize terminal to at least 40x10 characters
 
 ### Command not executing
-Make sure you're pressing `Enter` in the Review state, not `Esc`.
+Make sure you press `Enter` in Review state, not `Esc`
+
+### Python not detected
+Install Python 3: `brew install python3` (macOS) or `apt install python3` (Linux)
+
+## Uninstall
+
+```bash
+rm ~/.local/bin/sabi
+rm -rf ~/.config/sabi
+rm -rf ~/Library/Application\ Support/sabi  # macOS
+rm -rf ~/.local/share/sabi                   # Linux
+```
 
 ## License
 
