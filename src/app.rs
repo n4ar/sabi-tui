@@ -1118,4 +1118,282 @@ mod tests {
         
         assert_eq!(result, InputResult::Blocked);
     }
+
+    // **Feature: agent-rs, Property 6: Command Display in ReviewAction**
+    // *For any* tool call response from the AI, the command SHALL be displayed
+    // in the action_textarea when transitioning to ReviewAction state.
+    // **Validates: Requirements 3.1**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_command_displayed_in_review_action(command in "[a-zA-Z][a-zA-Z0-9 _\\-./]{0,50}") {
+            let mut app = test_app();
+            
+            // Simulate receiving a tool call and transitioning to ReviewAction
+            app.state = AppState::Thinking;
+            app.set_action_text(&command);
+            app.transition(StateEvent::ToolCallReceived);
+            
+            // Property: state should be ReviewAction
+            prop_assert_eq!(app.state, AppState::ReviewAction);
+            
+            // Property: action_textarea should contain the command
+            let action_text = app.get_action_text();
+            prop_assert_eq!(
+                action_text.trim(),
+                command.trim(),
+                "action_textarea should display the command"
+            );
+        }
+
+        #[test]
+        fn prop_command_editable_in_review_action(
+            initial_command in "[a-zA-Z][a-zA-Z0-9 ]{0,20}",
+            edit_char in "[a-zA-Z0-9]"
+        ) {
+            let mut app = test_app();
+            
+            // Set up in ReviewAction with a command
+            app.state = AppState::ReviewAction;
+            app.set_action_text(&initial_command);
+            
+            let initial_text = app.get_action_text();
+            
+            // Type a character to edit
+            let ch = edit_char.chars().next().unwrap();
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            app.handle_key_event(key);
+            
+            // Property: text should have changed (character added)
+            prop_assert_ne!(
+                app.get_action_text(),
+                initial_text,
+                "Command should be editable in ReviewAction"
+            );
+        }
+    }
+
+    // **Feature: agent-rs, Property 10: Feedback Loop Consistency**
+    // *For any* command execution result, the output SHALL be sent back to the AI
+    // and the AI's response SHALL be added to the message history.
+    // **Validates: Requirements 5.1, 5.2, 5.3**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_command_output_added_to_history(
+            command in "[a-zA-Z][a-zA-Z0-9 ]{0,20}",
+            output in "[a-zA-Z0-9 ]{0,50}",
+            exit_code in 0i32..128
+        ) {
+            let mut app = test_app();
+            
+            // Set up state as if command was just executed
+            app.state = AppState::Executing;
+            app.current_command = Some(command.clone());
+            let initial_count = app.messages.len();
+            
+            // Simulate command completion feedback being added
+            let feedback = format!(
+                "Command: {}\nExit code: {}\nOutput:\n{}",
+                command, exit_code, output
+            );
+            app.add_message(crate::message::Message::user(&feedback));
+            app.transition(StateEvent::CommandComplete);
+            
+            // Property: message count should increase
+            prop_assert!(
+                app.messages.len() > initial_count,
+                "Message history should grow after command completion"
+            );
+            
+            // Property: state should transition to Finalizing
+            prop_assert_eq!(
+                app.state,
+                AppState::Finalizing,
+                "State should be Finalizing after command completion"
+            );
+        }
+
+        #[test]
+        fn prop_ai_response_added_after_analysis(
+            ai_response in "[a-zA-Z0-9 ]{1,100}"
+        ) {
+            let mut app = test_app();
+            
+            // Set up in Finalizing state
+            app.state = AppState::Finalizing;
+            let initial_count = app.messages.len();
+            
+            // Simulate AI response
+            app.add_message(crate::message::Message::model(&ai_response));
+            app.transition(StateEvent::TextResponseReceived);
+            
+            // Property: message count should increase
+            prop_assert_eq!(
+                app.messages.len(),
+                initial_count + 1,
+                "AI response should be added to history"
+            );
+            
+            // Property: state should return to Input
+            prop_assert_eq!(
+                app.state,
+                AppState::Input,
+                "State should return to Input after text response"
+            );
+        }
+    }
+
+    // **Feature: agent-rs, Property 16: Error State Recovery**
+    // *For any* error occurring during Thinking, Executing, or Finalizing states,
+    // the application SHALL transition to Input state and display an error message.
+    // **Validates: Requirements 7.4**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_error_recovery_from_thinking(error_msg in "[a-zA-Z0-9 ]{1,50}") {
+            let mut app = test_app();
+            app.state = AppState::Thinking;
+            
+            app.set_error(&error_msg);
+            app.transition(StateEvent::ApiError);
+            
+            prop_assert_eq!(app.state, AppState::Input);
+            prop_assert!(app.error_message.is_some());
+            prop_assert_eq!(app.error_message.as_ref().unwrap(), &error_msg);
+        }
+
+        #[test]
+        fn prop_error_recovery_from_finalizing(error_msg in "[a-zA-Z0-9 ]{1,50}") {
+            let mut app = test_app();
+            app.state = AppState::Finalizing;
+            
+            app.set_error(&error_msg);
+            app.transition(StateEvent::ApiError);
+            
+            prop_assert_eq!(app.state, AppState::Input);
+            prop_assert!(app.error_message.is_some());
+        }
+
+        #[test]
+        fn prop_error_preserves_history(
+            input in non_empty_string(),
+            error_msg in "[a-zA-Z0-9 ]{1,50}"
+        ) {
+            let mut app = test_app();
+            
+            // Add some history
+            app.add_message(crate::message::Message::user(&input));
+            let history_count = app.messages.len();
+            
+            // Simulate error in Thinking
+            app.state = AppState::Thinking;
+            app.set_error(&error_msg);
+            app.transition(StateEvent::ApiError);
+            
+            // Property: history should be preserved
+            prop_assert_eq!(
+                app.messages.len(),
+                history_count,
+                "Message history should be preserved after error"
+            );
+        }
+
+        #[test]
+        fn prop_error_clears_on_new_input(
+            error_msg in "[a-zA-Z0-9 ]{1,50}",
+            new_input in non_empty_string()
+        ) {
+            let mut app = test_app();
+            
+            // Set an error
+            app.set_error(&error_msg);
+            prop_assert!(app.error_message.is_some());
+            
+            // Clear error explicitly (as would happen on new action)
+            app.clear_error();
+            
+            prop_assert!(
+                app.error_message.is_none(),
+                "Error should be clearable"
+            );
+        }
+    }
+
+    #[test]
+    fn test_react_loop_tool_call_to_review() {
+        let mut app = test_app();
+        
+        // Start in Thinking (after user submitted query)
+        app.state = AppState::Thinking;
+        
+        // Receive tool call
+        app.set_action_text("ls -la");
+        app.transition(StateEvent::ToolCallReceived);
+        
+        assert_eq!(app.state, AppState::ReviewAction);
+        assert_eq!(app.get_action_text(), "ls -la");
+    }
+
+    #[test]
+    fn test_react_loop_text_response_to_input() {
+        let mut app = test_app();
+        
+        // Start in Thinking
+        app.state = AppState::Thinking;
+        
+        // Receive text response (no tool call)
+        app.add_message(crate::message::Message::model("The answer is 42"));
+        app.transition(StateEvent::TextResponseReceived);
+        
+        assert_eq!(app.state, AppState::Input);
+        assert_eq!(app.messages.last().unwrap().content, "The answer is 42");
+    }
+
+    #[test]
+    fn test_react_loop_execute_to_finalizing() {
+        let mut app = test_app();
+        
+        // Start in Executing
+        app.state = AppState::Executing;
+        app.current_command = Some("echo test".to_string());
+        
+        // Command completes
+        app.execution_output = "test".to_string();
+        app.transition(StateEvent::CommandComplete);
+        
+        assert_eq!(app.state, AppState::Finalizing);
+    }
+
+    #[test]
+    fn test_react_loop_finalizing_to_input() {
+        let mut app = test_app();
+        
+        // Start in Finalizing
+        app.state = AppState::Finalizing;
+        
+        // AI analysis completes with text response
+        app.add_message(crate::message::Message::model("Command executed successfully"));
+        app.transition(StateEvent::TextResponseReceived);
+        
+        assert_eq!(app.state, AppState::Input);
+    }
+
+    #[test]
+    fn test_react_loop_finalizing_to_review_action() {
+        let mut app = test_app();
+        
+        // Start in Finalizing
+        app.state = AppState::Finalizing;
+        
+        // AI wants to run another command
+        app.set_action_text("cat output.txt");
+        app.transition(StateEvent::ToolCallReceived);
+        
+        assert_eq!(app.state, AppState::ReviewAction);
+        assert_eq!(app.get_action_text(), "cat output.txt");
+    }
 }

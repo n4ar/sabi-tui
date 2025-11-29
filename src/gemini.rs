@@ -66,6 +66,7 @@ pub enum GeminiError {
 
 
 /// Client for interacting with the Gemini API
+#[derive(Clone)]
 pub struct GeminiClient {
     /// HTTP client for making requests
     client: Client,
