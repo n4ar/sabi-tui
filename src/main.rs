@@ -11,6 +11,7 @@ mod executor;
 mod gemini;
 mod message;
 mod state;
+mod tool_call;
 mod ui;
 
 use anyhow::{Context, Result};
