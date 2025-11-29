@@ -9,6 +9,15 @@ use crate::config::Config;
 use crate::message::Message;
 use crate::state::{AppState, StateEvent, TransitionResult, transition};
 
+/// Available slash commands
+pub const SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/clear", "Clear chat history"),
+    ("/save", "Save session to file"),
+    ("/load", "Load session from file"),
+    ("/help", "Show available commands"),
+    ("/quit", "Exit application"),
+];
+
 /// Main application state container
 pub struct App<'a> {
     /// Current application state
@@ -87,6 +96,19 @@ impl<'a> App<'a> {
         self.get_input_text().is_empty()
     }
 
+    /// Get autocomplete suggestions for current input
+    pub fn get_suggestions(&self) -> Vec<(&'static str, &'static str)> {
+        let input = self.input_textarea.lines().join("");
+        if !input.starts_with('/') {
+            return Vec::new();
+        }
+        SLASH_COMMANDS
+            .iter()
+            .filter(|(cmd, _)| cmd.starts_with(&input))
+            .copied()
+            .collect()
+    }
+
     /// Clear the input textarea
     pub fn clear_input(&mut self) {
         self.input_textarea = TextArea::default();
@@ -148,17 +170,98 @@ impl<'a> App<'a> {
 
     /// Submit the current input
     /// 
-    /// Returns true if the input was submitted (non-empty), false otherwise.
-    pub fn submit_input(&mut self) -> bool {
+    /// Returns SubmitResult indicating what action to take
+    pub fn submit_input(&mut self) -> SubmitResult {
         let is_empty = self.is_input_empty();
         
-        if !is_empty {
-            let input = self.get_input_text();
-            self.add_message(Message::user(&input));
-            self.clear_input();
+        if is_empty {
+            return SubmitResult::Empty;
         }
         
-        self.transition(StateEvent::SubmitInput { is_empty })
+        let input = self.get_input_text();
+        
+        // Check for slash commands
+        if input.starts_with('/') {
+            self.clear_input();
+            return self.handle_slash_command(&input);
+        }
+        
+        self.add_message(Message::user(&input));
+        self.clear_input();
+        self.transition(StateEvent::SubmitInput { is_empty: false });
+        SubmitResult::Query
+    }
+
+    /// Handle slash commands
+    fn handle_slash_command(&mut self, input: &str) -> SubmitResult {
+        let parts: Vec<&str> = input.trim().splitn(2, ' ').collect();
+        let cmd = parts[0].to_lowercase();
+        let arg = parts.get(1).map(|s| s.trim());
+
+        match cmd.as_str() {
+            "/clear" => {
+                // Keep only system prompt
+                self.messages.retain(|m| m.role == crate::message::MessageRole::System);
+                self.add_message(Message::system("Chat cleared."));
+                SubmitResult::Handled
+            }
+            "/save" => {
+                let filename = arg.unwrap_or("session.json");
+                match self.save_session(filename) {
+                    Ok(_) => self.add_message(Message::system(&format!("Session saved to {}", filename))),
+                    Err(e) => self.add_message(Message::system(&format!("Failed to save: {}", e))),
+                }
+                SubmitResult::Handled
+            }
+            "/load" => {
+                let filename = arg.unwrap_or("session.json");
+                match self.load_session(filename) {
+                    Ok(_) => self.add_message(Message::system(&format!("Session loaded from {}", filename))),
+                    Err(e) => self.add_message(Message::system(&format!("Failed to load: {}", e))),
+                }
+                SubmitResult::Handled
+            }
+            "/help" => {
+                self.add_message(Message::system(
+                    "Available commands:\n\
+                     /clear - Clear chat history\n\
+                     /save [file] - Save session (default: session.json)\n\
+                     /load [file] - Load session (default: session.json)\n\
+                     /help - Show this help\n\
+                     /quit - Exit application"
+                ));
+                SubmitResult::Handled
+            }
+            "/quit" | "/exit" | "/q" => {
+                self.should_quit = true;
+                SubmitResult::Quit
+            }
+            _ => {
+                self.add_message(Message::system(&format!("Unknown command: {}. Type /help for available commands.", cmd)));
+                SubmitResult::Handled
+            }
+        }
+    }
+
+    /// Save session to file
+    fn save_session(&self, filename: &str) -> std::io::Result<()> {
+        let data: Vec<_> = self.messages.iter()
+            .filter(|m| m.role != crate::message::MessageRole::System)
+            .collect();
+        let json = serde_json::to_string_pretty(&data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(filename, json)
+    }
+
+    /// Load session from file
+    fn load_session(&mut self, filename: &str) -> std::io::Result<()> {
+        let json = std::fs::read_to_string(filename)?;
+        let messages: Vec<Message> = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        // Keep system prompt, add loaded messages
+        self.messages.retain(|m| m.role == crate::message::MessageRole::System);
+        self.messages.extend(messages);
+        Ok(())
     }
 
     /// Advance the spinner animation
@@ -207,10 +310,10 @@ impl<'a> App<'a> {
     fn handle_input_state(&mut self, key: KeyEvent) -> InputResult {
         match key.code {
             KeyCode::Enter => {
-                if self.submit_input() {
-                    InputResult::SubmitQuery
-                } else {
-                    InputResult::Ignored
+                match self.submit_input() {
+                    SubmitResult::Query => InputResult::SubmitQuery,
+                    SubmitResult::Quit => InputResult::Quit,
+                    _ => InputResult::Handled,
                 }
             }
             KeyCode::Esc => {
@@ -334,6 +437,19 @@ pub enum InputResult {
     Quit,
 }
 
+/// Result of submitting input
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitResult {
+    /// Empty input, nothing to do
+    Empty,
+    /// Query to send to AI
+    Query,
+    /// Slash command handled internally
+    Handled,
+    /// Quit requested
+    Quit,
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -376,8 +492,8 @@ mod tests {
             // Attempt to submit
             let submitted = app.submit_input();
             
-            // Property: submission should fail (return false)
-            prop_assert!(!submitted, "Whitespace-only input should not be submitted");
+            // Property: submission should return Empty
+            prop_assert_eq!(submitted, SubmitResult::Empty, "Whitespace-only input should not be submitted");
             
             // Property: state should remain Input
             prop_assert_eq!(
@@ -408,8 +524,8 @@ mod tests {
             // Attempt to submit
             let submitted = app.submit_input();
             
-            // Property: submission should fail
-            prop_assert!(!submitted);
+            // Property: submission should return Empty
+            prop_assert_eq!(submitted, SubmitResult::Empty);
             
             // Property: state should remain Input
             prop_assert_eq!(app.state, AppState::Input);
@@ -478,8 +594,8 @@ mod tests {
             // Attempt to submit
             let submitted = app.submit_input();
             
-            // Property: submission should succeed (return true)
-            prop_assert!(submitted, "Non-empty input should be submitted");
+            // Property: submission should succeed (return Query)
+            prop_assert_eq!(submitted, SubmitResult::Query, "Non-empty input should be submitted");
             
             // Property: state should transition to Thinking
             prop_assert_eq!(
@@ -530,7 +646,7 @@ mod tests {
         // Submit
         let submitted = app.submit_input();
         
-        assert!(submitted);
+        assert_eq!(submitted, SubmitResult::Query);
         assert_eq!(app.state, AppState::Thinking);
         assert_eq!(app.messages.len(), 1);
         assert_eq!(app.messages[0].content, "list files");

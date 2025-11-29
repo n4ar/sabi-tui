@@ -130,6 +130,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 /// Create the main three-pane layout
 fn create_main_layout(area: Rect, app: &App) -> Vec<Rect> {
     // Adjust middle pane size based on state
+    let has_suggestions = !app.get_suggestions().is_empty();
+    
     let middle_height = match app.state {
         AppState::ReviewAction | AppState::Executing => {
             // Show larger middle pane when reviewing command or executing
@@ -138,6 +140,10 @@ fn create_main_layout(area: Rect, app: &App) -> Vec<Rect> {
         AppState::Thinking | AppState::Finalizing => {
             // Show spinner area
             Constraint::Length(3)
+        }
+        AppState::Input if has_suggestions => {
+            // Show suggestions
+            Constraint::Length(3 + app.get_suggestions().len() as u16 + 2)
         }
         _ => {
             // Minimal middle pane in other states
@@ -197,9 +203,10 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(Span::styled(indented.clone(), base_style)));
             }
             
-            // Estimate wrapped lines (add 1 for the line itself, plus wrapped portions)
-            if content_width > 0 {
-                estimated_lines += 1 + (content_line.len() / content_width);
+            // Estimate wrapped lines more generously
+            let line_len = content_line.len();
+            if content_width > 0 && line_len > 0 {
+                estimated_lines += 1 + (line_len / content_width) + 1; // extra +1 for safety
             } else {
                 estimated_lines += 1;
             }
@@ -207,16 +214,16 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
         
         // Add empty line between messages
         lines.push(Line::from(""));
-        estimated_lines += 1;
+        estimated_lines += 2; // extra margin
     }
     
     let text = Text::from(lines);
     let visible_height = area.height.saturating_sub(2) as usize;
     
-    // Calculate scroll position - add buffer to ensure we see the bottom
-    let scroll = if app.scroll_offset == 0 && estimated_lines > visible_height {
-        // When at bottom (offset=0), scroll to show latest content with extra buffer
-        (estimated_lines.saturating_sub(visible_height) + 5) as u16
+    // Calculate scroll position - always show bottom when scroll_offset is 0
+    let scroll = if app.scroll_offset == 0 {
+        // Scroll to absolute bottom
+        estimated_lines.saturating_sub(visible_height.saturating_sub(1)) as u16
     } else if estimated_lines > visible_height {
         let max_scroll = estimated_lines.saturating_sub(visible_height);
         max_scroll.saturating_sub(app.scroll_offset as usize) as u16
@@ -365,15 +372,54 @@ fn render_spinner(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render input box for user queries
 fn render_input_box(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Enter your query (Esc to quit) ")
-        .border_style(Style::default().fg(Color::White));
+    let suggestions = app.get_suggestions();
     
-    let mut textarea = app.input_textarea.clone();
-    textarea.set_block(block);
-    
-    frame.render_widget(&textarea, area);
+    if suggestions.is_empty() {
+        // Normal input box
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Enter your query (Esc to quit) ")
+            .border_style(Style::default().fg(Color::White));
+        
+        let mut textarea = app.input_textarea.clone();
+        textarea.set_block(block);
+        frame.render_widget(&textarea, area);
+    } else {
+        // Split area for input and suggestions
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(1),
+            ])
+            .split(area);
+        
+        // Input box
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Command ")
+            .border_style(Style::default().fg(Color::Cyan));
+        
+        let mut textarea = app.input_textarea.clone();
+        textarea.set_block(block);
+        frame.render_widget(&textarea, chunks[0]);
+        
+        // Suggestions
+        let suggestion_lines: Vec<Line> = suggestions
+            .iter()
+            .map(|(cmd, desc)| {
+                Line::from(vec![
+                    Span::styled(*cmd, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(" - "),
+                    Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+                ])
+            })
+            .collect();
+        
+        let suggestions_widget = Paragraph::new(suggestion_lines)
+            .block(Block::default().borders(Borders::ALL).title(" Suggestions ").border_style(Style::default().fg(Color::DarkGray)));
+        frame.render_widget(suggestions_widget, chunks[1]);
+    }
 }
 
 /// Render done state message
