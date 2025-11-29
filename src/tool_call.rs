@@ -6,15 +6,25 @@
 use serde::{Deserialize, Serialize};
 
 /// A tool call request from the AI
-///
-/// The AI responds with this JSON format when it wants to execute a command:
-/// `{"tool": "run_cmd", "command": "..."}`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
-    /// The tool to invoke (e.g., "run_cmd")
+    /// The tool to invoke
     pub tool: String,
-    /// The command to execute
+    /// For run_cmd: the command to execute
+    #[serde(default)]
     pub command: String,
+    /// For read_file/write_file: the file path
+    #[serde(default)]
+    pub path: String,
+    /// For write_file: the content to write
+    #[serde(default)]
+    pub content: String,
+    /// For search: the pattern to search
+    #[serde(default)]
+    pub pattern: String,
+    /// For search: the directory to search in
+    #[serde(default)]
+    pub directory: String,
 }
 
 impl ToolCall {
@@ -23,12 +33,36 @@ impl ToolCall {
         Self {
             tool: tool.into(),
             command: command.into(),
+            path: String::new(),
+            content: String::new(),
+            pattern: String::new(),
+            directory: String::new(),
         }
     }
 
     /// Create a run_cmd tool call
     pub fn run_cmd(command: impl Into<String>) -> Self {
         Self::new("run_cmd", command)
+    }
+
+    /// Check if this is a run_cmd tool call
+    pub fn is_run_cmd(&self) -> bool {
+        self.tool == "run_cmd"
+    }
+
+    /// Check if this is a read_file tool call
+    pub fn is_read_file(&self) -> bool {
+        self.tool == "read_file"
+    }
+
+    /// Check if this is a write_file tool call
+    pub fn is_write_file(&self) -> bool {
+        self.tool == "write_file"
+    }
+
+    /// Check if this is a search tool call
+    pub fn is_search(&self) -> bool {
+        self.tool == "search"
     }
 
     /// Parse AI response for tool call JSON
@@ -121,11 +155,6 @@ impl ToolCall {
         }
 
         None
-    }
-
-    /// Check if this is a run_cmd tool call
-    pub fn is_run_cmd(&self) -> bool {
-        self.tool == "run_cmd"
     }
 }
 

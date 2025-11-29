@@ -182,12 +182,12 @@ async fn run_loop(
                     
                     // 12.4: ReviewAction → Executing transition
                     if result == InputResult::ExecuteCommand {
-                        if let Some(ref cmd) = app.current_command {
-                            let cmd = cmd.clone();
+                        if let Some(ref tool) = app.current_tool {
+                            let tool = tool.clone();
                             let exec = CommandExecutor::new(&app.config);
                             let tx_clone = tx.clone();
                             tokio::spawn(async move {
-                                let result = exec.execute(&cmd);
+                                let result = exec.execute_tool(&tool);
                                 let _ = tx_clone.send(Event::CommandComplete(result));
                             });
                         }
@@ -205,9 +205,20 @@ async fn run_loop(
                             app.add_message(Message::model(&text));
                             
                             match ParsedResponse::parse(&text) {
-                                ParsedResponse::ToolCall(tc) if tc.is_run_cmd() => {
-                                    app.set_action_text(&tc.command);
-                                    app.dangerous_command_detected = detector.is_dangerous(&tc.command);
+                                ParsedResponse::ToolCall(tc) => {
+                                    // Format display text based on tool type
+                                    let display = match tc.tool.as_str() {
+                                        "run_cmd" => tc.command.clone(),
+                                        "read_file" => format!("read_file: {}", tc.path),
+                                        "write_file" => format!("write_file: {} ({} bytes)", tc.path, tc.content.len()),
+                                        "search" => format!("search: {} in {}", tc.pattern, if tc.directory.is_empty() { "." } else { &tc.directory }),
+                                        _ => format!("{:?}", tc),
+                                    };
+                                    app.set_action_text(&display);
+                                    app.current_tool = Some(tc.clone());
+                                    if tc.is_run_cmd() {
+                                        app.dangerous_command_detected = detector.is_dangerous(&tc.command);
+                                    }
                                     app.transition(StateEvent::ToolCallReceived);
                                 }
                                 _ => {
@@ -230,9 +241,13 @@ async fn run_loop(
                         format!("{}\n{}", result.stdout, result.stderr)
                     };
                     
+                    let tool_desc = app.current_tool.as_ref()
+                        .map(|t| format!("{}: {}", t.tool, if t.tool == "run_cmd" { &t.command } else { &t.path }))
+                        .unwrap_or_default();
+                    
                     let feedback = format!(
-                        "Command: {}\nExit code: {}\nOutput:\n{}",
-                        app.current_command.as_deref().unwrap_or(""),
+                        "Tool: {}\nExit code: {}\nOutput:\n{}",
+                        tool_desc,
                         result.exit_code,
                         &app.execution_output
                     );

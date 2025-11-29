@@ -178,57 +178,54 @@ fn render_size_warning(frame: &mut Frame, area: Rect) {
 /// Render the chat history pane (top)
 fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
-    
-    // Track approximate wrapped line count
-    let content_width = area.width.saturating_sub(4) as usize; // borders + indent
-    let mut estimated_lines: usize = 0;
+    let content_width = area.width.saturating_sub(4) as usize; // borders + padding
     
     for message in &app.messages {
         let (prefix, style) = get_message_style(&message.role);
         
         // Add prefix line
         lines.push(Line::from(Span::styled(prefix, style)));
-        estimated_lines += 1;
         
         // Add content lines with indentation and markdown parsing for AI messages
         let base_style = style.remove_modifier(Modifier::BOLD);
         for content_line in message.content.lines() {
             let indented = format!("  {}", content_line);
             
-            if message.role == MessageRole::Model {
-                // Parse markdown for AI responses
-                let parsed = parse_markdown_line(&indented, base_style);
-                lines.push(parsed);
+            // Manually wrap long lines
+            if indented.len() > content_width && content_width > 10 {
+                let mut remaining = indented.as_str();
+                while !remaining.is_empty() {
+                    let take = remaining.len().min(content_width);
+                    let chunk = &remaining[..take];
+                    if message.role == MessageRole::Model {
+                        lines.push(parse_markdown_line(chunk, base_style));
+                    } else {
+                        lines.push(Line::from(Span::styled(chunk.to_string(), base_style)));
+                    }
+                    remaining = &remaining[take..];
+                }
             } else {
-                lines.push(Line::from(Span::styled(indented.clone(), base_style)));
-            }
-            
-            // Estimate wrapped lines more generously
-            let line_len = content_line.len();
-            if content_width > 0 && line_len > 0 {
-                estimated_lines += 1 + (line_len / content_width) + 1; // extra +1 for safety
-            } else {
-                estimated_lines += 1;
+                if message.role == MessageRole::Model {
+                    lines.push(parse_markdown_line(&indented, base_style));
+                } else {
+                    lines.push(Line::from(Span::styled(indented, base_style)));
+                }
             }
         }
         
         // Add empty line between messages
         lines.push(Line::from(""));
-        estimated_lines += 2; // extra margin
     }
     
+    let total_lines = lines.len();
     let text = Text::from(lines);
     let visible_height = area.height.saturating_sub(2) as usize;
     
-    // Calculate scroll position - always show bottom when scroll_offset is 0
+    // Simple scroll: when offset is 0, show the last visible_height lines
     let scroll = if app.scroll_offset == 0 {
-        // Scroll to absolute bottom
-        estimated_lines.saturating_sub(visible_height.saturating_sub(1)) as u16
-    } else if estimated_lines > visible_height {
-        let max_scroll = estimated_lines.saturating_sub(visible_height);
-        max_scroll.saturating_sub(app.scroll_offset as usize) as u16
+        total_lines.saturating_sub(visible_height) as u16
     } else {
-        0
+        total_lines.saturating_sub(visible_height).saturating_sub(app.scroll_offset as usize) as u16
     };
     
     let chat = Paragraph::new(text)
@@ -238,7 +235,6 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
                 .title(" Chat History ")
                 .border_style(Style::default().fg(Color::Cyan)),
         )
-        .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     
     frame.render_widget(chat, area);

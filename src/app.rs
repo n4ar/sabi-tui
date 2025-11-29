@@ -18,6 +18,8 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/quit", "Exit application"),
 ];
 
+use crate::tool_call::ToolCall;
+
 /// Main application state container
 pub struct App<'a> {
     /// Current application state
@@ -34,6 +36,9 @@ pub struct App<'a> {
 
     /// Current command being executed
     pub current_command: Option<String>,
+
+    /// Current tool call being executed
+    pub current_tool: Option<ToolCall>,
 
     /// Output from command execution
     pub execution_output: String,
@@ -71,6 +76,7 @@ impl<'a> App<'a> {
             action_textarea,
             messages: Vec::new(),
             current_command: None,
+            current_tool: None,
             execution_output: String::new(),
             error_message: None,
             spinner_frame: 0,

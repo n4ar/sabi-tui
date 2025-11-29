@@ -3,10 +3,12 @@
 //! Handles shell command execution and output capture with safety limits.
 
 use std::process::Command;
+use std::path::Path;
 
 use regex::Regex;
 
 use crate::config::Config;
+use crate::tool_call::ToolCall;
 
 /// Result of command execution
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +48,73 @@ impl CommandExecutor {
             max_output_bytes,
             max_output_lines,
         }
+    }
+
+    /// Execute a tool call
+    pub fn execute_tool(&self, tool: &ToolCall) -> CommandResult {
+        match tool.tool.as_str() {
+            "run_cmd" => self.execute(&tool.command),
+            "read_file" => self.read_file(&tool.path),
+            "write_file" => self.write_file(&tool.path, &tool.content),
+            "search" => self.search(&tool.pattern, &tool.directory),
+            _ => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Unknown tool: {}", tool.tool),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
+    /// Read a file and return its contents
+    pub fn read_file(&self, path: &str) -> CommandResult {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                let (output, truncated) = self.truncate_output(content);
+                CommandResult {
+                    stdout: output,
+                    stderr: String::new(),
+                    exit_code: 0,
+                    success: true,
+                    truncated,
+                }
+            }
+            Err(e) => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Failed to read file: {}", e),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
+    /// Write content to a file
+    pub fn write_file(&self, path: &str, content: &str) -> CommandResult {
+        match std::fs::write(path, content) {
+            Ok(_) => CommandResult {
+                stdout: format!("Successfully wrote {} bytes to {}", content.len(), path),
+                stderr: String::new(),
+                exit_code: 0,
+                success: true,
+                truncated: false,
+            },
+            Err(e) => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Failed to write file: {}", e),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
+    /// Search for files matching a pattern
+    pub fn search(&self, pattern: &str, directory: &str) -> CommandResult {
+        let dir = if directory.is_empty() { "." } else { directory };
+        let cmd = format!("find {} -name '{}' 2>/dev/null | head -100", dir, pattern);
+        self.execute(&cmd)
     }
 
     /// Execute a shell command and capture output
