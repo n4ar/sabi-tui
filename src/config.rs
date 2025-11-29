@@ -56,6 +56,10 @@ pub struct Config {
     /// Dangerous command patterns
     #[serde(default = "default_dangerous_patterns")]
     pub dangerous_patterns: Vec<String>,
+
+    /// Safe mode - show commands but don't execute
+    #[serde(default)]
+    pub safe_mode: bool,
 }
 
 fn default_model() -> String {
@@ -93,6 +97,7 @@ impl Default for Config {
             max_output_bytes: default_max_output_bytes(),
             max_output_lines: default_max_output_lines(),
             dangerous_patterns: default_dangerous_patterns(),
+            safe_mode: false,
         }
     }
 }
@@ -101,8 +106,8 @@ impl Config {
     /// Load configuration from file and environment variables
     ///
     /// Precedence (highest to lowest):
-    /// 1. Environment variables (AGENT_RS_API_KEY, etc.)
-    /// 2. Config file (~/.config/agent-rs/config.toml)
+    /// 1. Environment variables (SABI_API_KEY, etc.)
+    /// 2. Config file (~/.config/sabi/config.toml)
     /// 3. Default values
     pub fn load() -> Result<Self, ConfigError> {
         let mut config = Self::load_from_file().unwrap_or_default();
@@ -138,7 +143,7 @@ impl Config {
     fn config_path() -> Result<PathBuf, ConfigError> {
         let config_dir = dirs::config_dir()
             .ok_or(ConfigError::NotFound)?;
-        Ok(config_dir.join("agent-rs").join("config.toml"))
+        Ok(config_dir.join("sabi").join("config.toml"))
     }
 
     /// Save configuration to file
@@ -171,23 +176,23 @@ max_output_lines = {}
 
     /// Apply environment variable overrides
     fn apply_env_overrides(&mut self) {
-        if let Ok(api_key) = std::env::var("AGENT_RS_API_KEY") {
+        if let Ok(api_key) = std::env::var("SABI_API_KEY") {
             self.api_key = api_key;
         }
-        if let Ok(model) = std::env::var("AGENT_RS_MODEL") {
+        if let Ok(model) = std::env::var("SABI_MODEL") {
             self.model = model;
         }
-        if let Ok(max_history) = std::env::var("AGENT_RS_MAX_HISTORY") {
+        if let Ok(max_history) = std::env::var("SABI_MAX_HISTORY") {
             if let Ok(val) = max_history.parse() {
                 self.max_history_messages = val;
             }
         }
-        if let Ok(max_bytes) = std::env::var("AGENT_RS_MAX_OUTPUT_BYTES") {
+        if let Ok(max_bytes) = std::env::var("SABI_MAX_OUTPUT_BYTES") {
             if let Ok(val) = max_bytes.parse() {
                 self.max_output_bytes = val;
             }
         }
-        if let Ok(max_lines) = std::env::var("AGENT_RS_MAX_OUTPUT_LINES") {
+        if let Ok(max_lines) = std::env::var("SABI_MAX_OUTPUT_LINES") {
             if let Ok(val) = max_lines.parse() {
                 self.max_output_lines = val;
             }
@@ -241,9 +246,9 @@ max_history_messages = {}
 
             // Set environment variables (unsafe in Rust 2024)
             unsafe {
-                std::env::set_var("AGENT_RS_API_KEY", &env_api_key);
-                std::env::set_var("AGENT_RS_MODEL", &env_model);
-                std::env::set_var("AGENT_RS_MAX_HISTORY", &env_max_history.to_string());
+                std::env::set_var("SABI_API_KEY", &env_api_key);
+                std::env::set_var("SABI_MODEL", &env_model);
+                std::env::set_var("SABI_MAX_HISTORY", &env_max_history.to_string());
             }
 
             // Load config
@@ -256,9 +261,9 @@ max_history_messages = {}
 
             // Clean up env vars
             unsafe {
-                std::env::remove_var("AGENT_RS_API_KEY");
-                std::env::remove_var("AGENT_RS_MODEL");
-                std::env::remove_var("AGENT_RS_MAX_HISTORY");
+                std::env::remove_var("SABI_API_KEY");
+                std::env::remove_var("SABI_MODEL");
+                std::env::remove_var("SABI_MAX_HISTORY");
             }
         }
 
@@ -273,9 +278,9 @@ max_history_messages = {}
 
             // Ensure no env vars are set
             unsafe {
-                std::env::remove_var("AGENT_RS_API_KEY");
-                std::env::remove_var("AGENT_RS_MODEL");
-                std::env::remove_var("AGENT_RS_MAX_HISTORY");
+                std::env::remove_var("SABI_API_KEY");
+                std::env::remove_var("SABI_MODEL");
+                std::env::remove_var("SABI_MAX_HISTORY");
             }
 
             // Create a temp config file
@@ -310,11 +315,11 @@ max_history_messages = {}
 
             // Ensure no env vars are set
             unsafe {
-                std::env::remove_var("AGENT_RS_API_KEY");
-                std::env::remove_var("AGENT_RS_MODEL");
-                std::env::remove_var("AGENT_RS_MAX_HISTORY");
-                std::env::remove_var("AGENT_RS_MAX_OUTPUT_BYTES");
-                std::env::remove_var("AGENT_RS_MAX_OUTPUT_LINES");
+                std::env::remove_var("SABI_API_KEY");
+                std::env::remove_var("SABI_MODEL");
+                std::env::remove_var("SABI_MAX_HISTORY");
+                std::env::remove_var("SABI_MAX_OUTPUT_BYTES");
+                std::env::remove_var("SABI_MAX_OUTPUT_LINES");
             }
 
             // Load config with no file

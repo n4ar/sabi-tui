@@ -133,9 +133,15 @@ fn create_main_layout(area: Rect, app: &App) -> Vec<Rect> {
     let has_suggestions = !app.get_suggestions().is_empty();
     
     let middle_height = match app.state {
-        AppState::ReviewAction | AppState::Executing => {
-            // Show larger middle pane when reviewing command or executing
-            Constraint::Min(6)
+        AppState::ReviewAction => {
+            // Calculate height based on command content + border
+            let lines = app.get_action_text().lines().count().max(1);
+            Constraint::Length((lines as u16 + 2).min(12)) // +2 for border, max 12
+        }
+        AppState::Executing => {
+            // Spinner + output preview
+            let output_lines = app.execution_output.lines().count();
+            Constraint::Length((output_lines as u16 + 3).clamp(3, 15))
         }
         AppState::Thinking | AppState::Finalizing => {
             // Show spinner area
@@ -174,6 +180,8 @@ fn render_size_warning(frame: &mut Frame, area: Rect) {
     frame.render_widget(warning, area);
 }
 
+/// Maximum lines to render in chat history to prevent crashes
+const MAX_RENDER_LINES: usize = 500;
 
 /// Render the chat history pane (top)
 fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
@@ -188,21 +196,34 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
         
         // Add content lines with indentation and markdown parsing for AI messages
         let base_style = style.remove_modifier(Modifier::BOLD);
+        
+        // Limit content lines per message to prevent huge outputs
+        let max_lines_per_msg = 100;
+        let mut line_count = 0;
+        
         for content_line in message.content.lines() {
+            if line_count >= max_lines_per_msg {
+                lines.push(Line::from(Span::styled(
+                    "  ... [truncated for display]".to_string(),
+                    Style::default().fg(Color::DarkGray)
+                )));
+                break;
+            }
+            
             let indented = format!("  {}", content_line);
             
-            // Manually wrap long lines
-            if indented.len() > content_width && content_width > 10 {
-                let mut remaining = indented.as_str();
-                while !remaining.is_empty() {
-                    let take = remaining.len().min(content_width);
-                    let chunk = &remaining[..take];
+            // Manually wrap long lines (char-aware for UTF-8)
+            let char_count: usize = indented.chars().count();
+            if char_count > content_width && content_width > 10 {
+                let chars: Vec<char> = indented.chars().collect();
+                for chunk in chars.chunks(content_width) {
+                    let chunk_str: String = chunk.iter().collect();
                     if message.role == MessageRole::Model {
-                        lines.push(parse_markdown_line(chunk, base_style));
+                        lines.push(parse_markdown_line(&chunk_str, base_style));
                     } else {
-                        lines.push(Line::from(Span::styled(chunk.to_string(), base_style)));
+                        lines.push(Line::from(Span::styled(chunk_str, base_style)));
                     }
-                    remaining = &remaining[take..];
+                    line_count += 1;
                 }
             } else {
                 if message.role == MessageRole::Model {
@@ -210,11 +231,18 @@ fn render_chat_history(frame: &mut Frame, app: &App, area: Rect) {
                 } else {
                     lines.push(Line::from(Span::styled(indented, base_style)));
                 }
+                line_count += 1;
             }
         }
         
         // Add empty line between messages
         lines.push(Line::from(""));
+    }
+    
+    // Limit total lines to prevent rendering issues
+    if lines.len() > MAX_RENDER_LINES {
+        let skip = lines.len() - MAX_RENDER_LINES;
+        lines = lines.into_iter().skip(skip).collect();
     }
     
     let total_lines = lines.len();
@@ -458,6 +486,26 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw(" "),
     ];
+    
+    // Add safe mode indicator
+    if app.config.safe_mode {
+        spans.push(Span::styled(
+            " 🔒 SAFE ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    
+    // Add Python indicator
+    if app.python_available {
+        spans.push(Span::styled(
+            " 🐍 ",
+            Style::default().fg(Color::Green),
+        ));
+    }
     
     // Add error message if present
     if let Some(ref error) = app.error_message {

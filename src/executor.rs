@@ -3,9 +3,9 @@
 //! Handles shell command execution and output capture with safety limits.
 
 use std::process::Command;
-use std::path::Path;
 
 use regex::Regex;
+use tokio::process::Command as TokioCommand;
 
 use crate::config::Config;
 use crate::tool_call::ToolCall;
@@ -54,6 +54,7 @@ impl CommandExecutor {
     pub fn execute_tool(&self, tool: &ToolCall) -> CommandResult {
         match tool.tool.as_str() {
             "run_cmd" => self.execute(&tool.command),
+            "run_python" => self.run_python(&tool.code),
             "read_file" => self.read_file(&tool.path),
             "write_file" => self.write_file(&tool.path, &tool.content),
             "search" => self.search(&tool.pattern, &tool.directory),
@@ -64,6 +65,55 @@ impl CommandExecutor {
                 success: false,
                 truncated: false,
             },
+        }
+    }
+
+    /// Execute Python code
+    pub fn run_python(&self, code: &str) -> CommandResult {
+        use std::process::Command;
+        use std::io::Write;
+        
+        let mut child = match Command::new("python3")
+            .arg("-c")
+            .arg(code)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return CommandResult {
+                stdout: String::new(),
+                stderr: format!("Failed to start Python: {}", e),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        };
+        
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => return CommandResult {
+                stdout: String::new(),
+                stderr: format!("Python execution failed: {}", e),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        };
+        
+        let (stdout, stdout_truncated) = self.truncate_output(
+            String::from_utf8_lossy(&output.stdout).to_string()
+        );
+        let (stderr, stderr_truncated) = self.truncate_output(
+            String::from_utf8_lossy(&output.stderr).to_string()
+        );
+        
+        CommandResult {
+            stdout,
+            stderr,
+            exit_code: output.status.code().unwrap_or(-1),
+            success: output.status.success(),
+            truncated: stdout_truncated || stderr_truncated,
         }
     }
 
@@ -159,6 +209,103 @@ impl CommandExecutor {
         }
     }
 
+    /// Execute a shell command asynchronously (cancellable)
+    pub async fn execute_async(&self, command: &str) -> CommandResult {
+        let shell = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+
+        let output = TokioCommand::new(shell.0)
+            .arg(shell.1)
+            .arg(command)
+            .output()
+            .await;
+
+        match output {
+            Ok(output) => {
+                let (stdout, stdout_truncated) = self.truncate_output(
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                );
+                let (stderr, stderr_truncated) = self.truncate_output(
+                    String::from_utf8_lossy(&output.stderr).to_string()
+                );
+                CommandResult {
+                    stdout,
+                    stderr,
+                    exit_code: output.status.code().unwrap_or(-1),
+                    success: output.status.success(),
+                    truncated: stdout_truncated || stderr_truncated,
+                }
+            }
+            Err(e) => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Failed to execute: {}", e),
+                exit_code: -1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
+    /// Execute a tool call asynchronously (cancellable)
+    pub async fn execute_tool_async(&self, tool: &ToolCall) -> CommandResult {
+        match tool.tool.as_str() {
+            "run_cmd" => self.execute_async(&tool.command).await,
+            "run_python" => self.run_python_async(&tool.code).await,
+            // These are fast, no need for async
+            "read_file" => self.read_file(&tool.path),
+            "write_file" => self.write_file(&tool.path, &tool.content),
+            "search" => self.execute_async(&format!(
+                "find {} -name '{}' 2>/dev/null | head -100",
+                if tool.directory.is_empty() { "." } else { &tool.directory },
+                tool.pattern
+            )).await,
+            _ => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Unknown tool: {}", tool.tool),
+                exit_code: 1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
+    /// Execute Python code asynchronously
+    pub async fn run_python_async(&self, code: &str) -> CommandResult {
+        let output = TokioCommand::new("python3")
+            .arg("-c")
+            .arg(code)
+            .output()
+            .await;
+
+        match output {
+            Ok(output) => {
+                let (stdout, stdout_truncated) = self.truncate_output(
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                );
+                let (stderr, stderr_truncated) = self.truncate_output(
+                    String::from_utf8_lossy(&output.stderr).to_string()
+                );
+                CommandResult {
+                    stdout,
+                    stderr,
+                    exit_code: output.status.code().unwrap_or(-1),
+                    success: output.status.success(),
+                    truncated: stdout_truncated || stderr_truncated,
+                }
+            }
+            Err(e) => CommandResult {
+                stdout: String::new(),
+                stderr: format!("Python error: {}", e),
+                exit_code: -1,
+                success: false,
+                truncated: false,
+            },
+        }
+    }
+
     /// Truncate output to configured limits
     ///
     /// Returns (truncated_output, was_truncated)
@@ -232,6 +379,43 @@ impl DangerousCommandDetector {
             .iter()
             .filter(|p| p.is_match(command))
             .collect()
+    }
+}
+
+/// Detects interactive commands that require a TTY
+pub struct InteractiveCommandDetector {
+    patterns: Vec<Regex>,
+}
+
+impl InteractiveCommandDetector {
+    pub fn new() -> Self {
+        let patterns = [
+            r"^(nano|vim?|emacs|pico|ne|joe)\b",  // editors
+            r"^(ssh|telnet|ftp|sftp)\b",          // remote sessions
+            r"^(htop|top|less|more|man)\b",       // pagers/monitors
+            r"^(mysql|psql|sqlite3|mongo)\b",    // database CLIs
+            r"^(python|node|irb|ghci)$",          // REPLs (no args)
+            r"\b(docker|podman)\s+.*\s-it\b",     // interactive containers
+        ];
+        Self {
+            patterns: patterns.iter().filter_map(|p| Regex::new(p).ok()).collect(),
+        }
+    }
+
+    pub fn is_interactive(&self, command: &str) -> bool {
+        let cmd = command.trim();
+        self.patterns.iter().any(|p| p.is_match(cmd))
+    }
+
+    pub fn suggestion(&self, command: &str) -> Option<&'static str> {
+        let cmd = command.trim().split_whitespace().next().unwrap_or("");
+        match cmd {
+            "nano" | "vim" | "vi" | "emacs" => Some("Use /save or write_file tool instead"),
+            "less" | "more" | "man" => Some("Use cat or read_file tool instead"),
+            "ssh" | "telnet" => Some("Interactive sessions not supported"),
+            "htop" | "top" => Some("Use 'ps aux' or 'ps aux | head' instead"),
+            _ => None,
+        }
     }
 }
 

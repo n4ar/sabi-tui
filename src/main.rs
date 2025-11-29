@@ -1,4 +1,4 @@
-//! agent-rs: A terminal-based AI agent implementing the ReAct pattern
+//! Sabi-TUI: A terminal-based AI agent implementing the ReAct pattern
 
 mod app;
 mod config;
@@ -31,7 +31,7 @@ use tui_textarea::TextArea;
 use app::{App, InputResult};
 use config::Config;
 use event::{Event, EventHandler};
-use executor::{CommandExecutor, DangerousCommandDetector};
+use executor::{CommandExecutor, DangerousCommandDetector, InteractiveCommandDetector};
 use gemini::{GeminiClient, SYSTEM_PROMPT};
 use message::Message;
 use state::StateEvent;
@@ -40,9 +40,29 @@ use tool_call::ParsedResponse;
 /// Tick rate for UI updates (100ms = 10 FPS)
 const TICK_RATE: Duration = Duration::from_millis(100);
 
+fn print_help() {
+    println!("sabi - AI-powered terminal assistant\n");
+    println!("Usage: sabi [OPTIONS]\n");
+    println!("Options:");
+    println!("  --safe       Safe mode: show commands but don't execute");
+    println!("  --help, -h   Show this help message");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
+    
     let mut config = Config::load().context("Failed to load configuration")?;
+    
+    // CLI flag overrides config
+    if args.iter().any(|a| a == "--safe") {
+        config.safe_mode = true;
+    }
 
     enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = stdout();
@@ -70,13 +90,25 @@ async fn main() -> Result<()> {
     let mut app = App::new(config.clone());
     let mut events = EventHandler::new(TICK_RATE);
     
-    // Initialize with system prompt
-    app.add_message(Message::system(SYSTEM_PROMPT));
+    // Build system prompt (include Python tool if available)
+    let system_prompt = if app.python_available {
+        format!("{}\n\n5. Run Python code:\n   {{\"tool\": \"run_python\", \"code\": \"<python code>\"}}\n\nEXAMPLE:\n- \"calculate 2^100\" → {{\"tool\": \"run_python\", \"code\": \"print(2**100)\"}}", SYSTEM_PROMPT)
+    } else {
+        SYSTEM_PROMPT.to_string()
+    };
+    app.add_message(Message::system(&system_prompt));
+    
+    // Auto-load previous session
+    app.auto_load();
 
     let gemini = GeminiClient::new(&config).ok();
     let detector = DangerousCommandDetector::new(&config.dangerous_patterns);
+    let interactive_detector = InteractiveCommandDetector::new();
 
-    let result = run_loop(&mut terminal, &mut app, &mut events, gemini, detector).await;
+    let result = run_loop(&mut terminal, &mut app, &mut events, gemini, detector, interactive_detector).await;
+
+    // Auto-save session before exit
+    app.auto_save();
 
     disable_raw_mode().context("Failed to disable raw mode")?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)
@@ -125,7 +157,7 @@ fn render_setup(frame: &mut Frame, textarea: &TextArea) {
         .split(frame.area());
 
     let welcome = Paragraph::new(
-        "Welcome to agent-rs!\n\n\
+        "Welcome to Sabi!\n\n\
          To get started, you need a Gemini API key.\n\
          Get one at: https://aistudio.google.com/apikey"
     )
@@ -153,6 +185,7 @@ async fn run_loop(
     events: &mut EventHandler,
     gemini: Option<GeminiClient>,
     detector: DangerousCommandDetector,
+    interactive_detector: InteractiveCommandDetector,
 ) -> Result<()> {
     let tx = events.sender();
 
@@ -163,6 +196,13 @@ async fn run_loop(
             match event {
                 Event::Key(key) => {
                     let result = app.handle_key_event(key);
+                    
+                    // Handle command cancellation
+                    if result == InputResult::CancelCommand {
+                        app.add_message(Message::system("⚠️ Command cancelled"));
+                        app.transition(StateEvent::AnalysisComplete);
+                        continue;
+                    }
                     
                     // 12.1: Input → Thinking transition
                     if result == InputResult::SubmitQuery {
@@ -183,13 +223,28 @@ async fn run_loop(
                     // 12.4: ReviewAction → Executing transition
                     if result == InputResult::ExecuteCommand {
                         if let Some(ref tool) = app.current_tool {
-                            let tool = tool.clone();
-                            let exec = CommandExecutor::new(&app.config);
-                            let tx_clone = tx.clone();
-                            tokio::spawn(async move {
-                                let result = exec.execute_tool(&tool);
-                                let _ = tx_clone.send(Event::CommandComplete(result));
-                            });
+                            // Safe mode: don't execute, just show what would run
+                            if app.config.safe_mode {
+                                let desc = match tool.tool.as_str() {
+                                    "run_cmd" => format!("Would run: {}", tool.command),
+                                    "run_python" => format!("Would run Python:\n{}", tool.code),
+                                    "read_file" => format!("Would read: {}", tool.path),
+                                    "write_file" => format!("Would write {} bytes to: {}", tool.content.len(), tool.path),
+                                    "search" => format!("Would search '{}' in {}", tool.pattern, tool.directory),
+                                    _ => format!("Would execute: {:?}", tool),
+                                };
+                                app.add_message(Message::system(&format!("🔒 [SAFE MODE] {}", desc)));
+                                app.transition(StateEvent::AnalysisComplete);
+                            } else {
+                                let tool = tool.clone();
+                                let exec = CommandExecutor::new(&app.config);
+                                let tx_clone = tx.clone();
+                                let handle = tokio::spawn(async move {
+                                    let result = exec.execute_tool_async(&tool).await;
+                                    let _ = tx_clone.send(Event::CommandComplete(result));
+                                });
+                                app.running_task = Some(handle);
+                            }
                         }
                     }
                 }
@@ -209,11 +264,34 @@ async fn run_loop(
                                     // Format display text based on tool type
                                     let display = match tc.tool.as_str() {
                                         "run_cmd" => tc.command.clone(),
+                                        "run_python" => format!("python:\n{}", tc.code),
                                         "read_file" => format!("read_file: {}", tc.path),
                                         "write_file" => format!("write_file: {} ({} bytes)", tc.path, tc.content.len()),
                                         "search" => format!("search: {} in {}", tc.pattern, if tc.directory.is_empty() { "." } else { &tc.directory }),
                                         _ => format!("{:?}", tc),
                                     };
+                                    
+                                    // Check for interactive commands
+                                    if tc.is_run_cmd() && interactive_detector.is_interactive(&tc.command) {
+                                        let suggestion = interactive_detector.suggestion(&tc.command)
+                                            .unwrap_or("This command requires an interactive terminal");
+                                        app.add_message(Message::model(&format!(
+                                            "⚠️ Cannot run interactive command: `{}`\n{}",
+                                            tc.command, suggestion
+                                        )));
+                                        app.transition(StateEvent::TextResponseReceived);
+                                        continue;
+                                    }
+                                    
+                                    // Check Python availability
+                                    if tc.tool == "run_python" && !app.python_available {
+                                        app.add_message(Message::model(
+                                            "⚠️ Python is not available on this system.\nPlease install Python 3 to use this feature."
+                                        ));
+                                        app.transition(StateEvent::TextResponseReceived);
+                                        continue;
+                                    }
+                                    
                                     app.set_action_text(&display);
                                     app.current_tool = Some(tc.clone());
                                     if tc.is_run_cmd() {
@@ -235,6 +313,7 @@ async fn run_loop(
                 
                 // 12.5: Executing → Finalizing → Input loop
                 Event::CommandComplete(result) => {
+                    app.running_task = None;
                     app.execution_output = if result.success {
                         result.stdout.clone()
                     } else {
@@ -266,6 +345,10 @@ async fn run_loop(
                     } else {
                         app.transition(StateEvent::AnalysisComplete);
                     }
+                }
+                
+                Event::CommandCancelled => {
+                    // Task was cancelled, already handled in key event
                 }
             }
         }

@@ -24,6 +24,8 @@ pub enum Event {
     ApiResponse(Result<String, GeminiError>),
     /// Command execution completed
     CommandComplete(CommandResult),
+    /// Command was cancelled
+    CommandCancelled,
 }
 
 /// Handles async event collection and distribution

@@ -25,6 +25,9 @@ pub struct ToolCall {
     /// For search: the directory to search in
     #[serde(default)]
     pub directory: String,
+    /// For run_python: the Python code to execute
+    #[serde(default)]
+    pub code: String,
 }
 
 impl ToolCall {
@@ -37,6 +40,7 @@ impl ToolCall {
             content: String::new(),
             pattern: String::new(),
             directory: String::new(),
+            code: String::new(),
         }
     }
 
@@ -105,16 +109,37 @@ impl ToolCall {
     /// - ```json ... ```
     /// - ``` ... ```
     fn try_parse_markdown_block(s: &str) -> Option<Self> {
-        // Look for ```json or ``` blocks
+        // Look for ```json or ``` blocks with JSON
         let patterns = ["```json", "```"];
 
         for pattern in patterns {
             if let Some(start_idx) = s.find(pattern) {
                 let content_start = start_idx + pattern.len();
                 if let Some(end_idx) = s[content_start..].find("```") {
-                    let json_content = s[content_start..content_start + end_idx].trim();
-                    if let Some(tool_call) = Self::try_parse_json(json_content) {
+                    let content = s[content_start..content_start + end_idx].trim();
+                    if let Some(tool_call) = Self::try_parse_json(content) {
                         return Some(tool_call);
+                    }
+                }
+            }
+        }
+
+        // Also check for bash/sh code blocks and convert to run_cmd
+        for pattern in ["```bash", "```sh", "```shell", "```zsh"] {
+            if let Some(start_idx) = s.find(pattern) {
+                let content_start = start_idx + pattern.len();
+                if let Some(end_idx) = s[content_start..].find("```") {
+                    let command = s[content_start..content_start + end_idx].trim();
+                    if !command.is_empty() {
+                        return Some(Self {
+                            tool: "run_cmd".to_string(),
+                            command: command.to_string(),
+                            path: String::new(),
+                            content: String::new(),
+                            pattern: String::new(),
+                            directory: String::new(),
+                            code: String::new(),
+                        });
                     }
                 }
             }

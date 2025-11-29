@@ -3,22 +3,70 @@
 //! Contains the App struct that holds all application state.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
+use tokio::task::JoinHandle;
 use tui_textarea::TextArea;
 
 use crate::config::Config;
-use crate::message::Message;
+use crate::message::{Message, MessageRole};
 use crate::state::{AppState, StateEvent, TransitionResult, transition};
+use crate::tool_call::ToolCall;
 
 /// Available slash commands
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/clear", "Clear chat history"),
-    ("/save", "Save session to file"),
-    ("/load", "Load session from file"),
+    ("/new", "Start new session"),
+    ("/sessions", "List all sessions"),
+    ("/switch", "Switch to session: /switch <id>"),
+    ("/delete", "Delete session: /delete <id>"),
     ("/help", "Show available commands"),
     ("/quit", "Exit application"),
 ];
 
-use crate::tool_call::ToolCall;
+/// Session data for persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub name: String,
+    pub timestamp: String,
+    pub cwd: String,
+    pub messages: Vec<Message>,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        let id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        Self {
+            id: id.clone(),
+            name: format!("Session {}", &id[9..]),  // Use time part as name
+            timestamp: chrono::Local::now().to_rfc3339(),
+            cwd: std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn from_messages(messages: &[Message]) -> Self {
+        let mut session = Self::new();
+        session.messages = messages.iter()
+            .filter(|m| m.role != MessageRole::System)
+            .cloned()
+            .collect();
+        session
+    }
+
+    /// Get preview of first user message
+    pub fn preview(&self) -> String {
+        self.messages.iter()
+            .find(|m| m.role == MessageRole::User)
+            .map(|m| {
+                let s: String = m.content.chars().take(40).collect();
+                if m.content.len() > 40 { format!("{}...", s) } else { s }
+            })
+            .unwrap_or_else(|| "(empty)".to_string())
+    }
+}
 
 /// Main application state container
 pub struct App<'a> {
@@ -60,6 +108,15 @@ pub struct App<'a> {
 
     /// Application configuration
     pub config: Config,
+
+    /// Python availability (checked at startup)
+    pub python_available: bool,
+
+    /// Currently running async task (for cancellation)
+    pub running_task: Option<JoinHandle<()>>,
+
+    /// Current session ID
+    pub current_session_id: String,
 }
 
 impl<'a> App<'a> {
@@ -69,6 +126,13 @@ impl<'a> App<'a> {
         input_textarea.set_placeholder_text("Type your query here...");
         
         let action_textarea = TextArea::default();
+        
+        // Check Python availability at startup
+        let python_available = std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
 
         Self {
             state: AppState::default(),
@@ -84,6 +148,16 @@ impl<'a> App<'a> {
             scroll_offset: 0,
             dangerous_command_detected: false,
             config,
+            python_available,
+            running_task: None,
+            current_session_id: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string(),
+        }
+    }
+
+    /// Cancel any running task
+    pub fn cancel_task(&mut self) {
+        if let Some(handle) = self.running_task.take() {
+            handle.abort();
         }
     }
 
@@ -211,31 +285,61 @@ impl<'a> App<'a> {
                 self.add_message(Message::system("Chat cleared."));
                 SubmitResult::Handled
             }
-            "/save" => {
-                let filename = arg.unwrap_or("session.json");
-                match self.save_session(filename) {
-                    Ok(_) => self.add_message(Message::system(&format!("Session saved to {}", filename))),
-                    Err(e) => self.add_message(Message::system(&format!("Failed to save: {}", e))),
-                }
-                SubmitResult::Handled
-            }
-            "/load" => {
-                let filename = arg.unwrap_or("session.json");
-                match self.load_session(filename) {
-                    Ok(_) => self.add_message(Message::system(&format!("Session loaded from {}", filename))),
-                    Err(e) => self.add_message(Message::system(&format!("Failed to load: {}", e))),
-                }
-                SubmitResult::Handled
-            }
             "/help" => {
                 self.add_message(Message::system(
                     "Available commands:\n\
+                     /new - Start new session\n\
+                     /sessions - List all sessions\n\
+                     /switch <id> - Switch to session\n\
+                     /delete <id> - Delete session\n\
                      /clear - Clear chat history\n\
-                     /save [file] - Save session (default: session.json)\n\
-                     /load [file] - Load session (default: session.json)\n\
                      /help - Show this help\n\
                      /quit - Exit application"
                 ));
+                SubmitResult::Handled
+            }
+            "/new" => {
+                self.new_session();
+                self.add_message(Message::system(&format!("New session started: {}", self.current_session_id)));
+                SubmitResult::Handled
+            }
+            "/sessions" => {
+                let sessions = Self::list_sessions();
+                if sessions.is_empty() {
+                    self.add_message(Message::system("No saved sessions."));
+                } else {
+                    let list: Vec<String> = sessions.iter().map(|s| {
+                        let marker = if s.id == self.current_session_id { "→ " } else { "  " };
+                        format!("{}{} | {} | {}", marker, s.id, s.timestamp.split('T').next().unwrap_or(""), s.preview())
+                    }).collect();
+                    self.add_message(Message::system(&format!("Sessions:\n{}", list.join("\n"))));
+                }
+                SubmitResult::Handled
+            }
+            "/switch" => {
+                if let Some(id) = arg {
+                    match self.switch_session(id) {
+                        Ok(_) => self.add_message(Message::system(&format!("Switched to session: {}", id))),
+                        Err(e) => self.add_message(Message::system(&format!("Failed to switch: {}", e))),
+                    }
+                } else {
+                    self.add_message(Message::system("Usage: /switch <session_id>"));
+                }
+                SubmitResult::Handled
+            }
+            "/delete" => {
+                if let Some(id) = arg {
+                    if id == self.current_session_id {
+                        self.add_message(Message::system("Cannot delete current session. Switch first."));
+                    } else {
+                        match Self::delete_session(id) {
+                            Ok(_) => self.add_message(Message::system(&format!("Deleted session: {}", id))),
+                            Err(e) => self.add_message(Message::system(&format!("Failed to delete: {}", e))),
+                        }
+                    }
+                } else {
+                    self.add_message(Message::system("Usage: /delete <session_id>"));
+                }
                 SubmitResult::Handled
             }
             "/quit" | "/exit" | "/q" => {
@@ -251,10 +355,9 @@ impl<'a> App<'a> {
 
     /// Save session to file
     fn save_session(&self, filename: &str) -> std::io::Result<()> {
-        let data: Vec<_> = self.messages.iter()
-            .filter(|m| m.role != crate::message::MessageRole::System)
-            .collect();
-        let json = serde_json::to_string_pretty(&data)
+        let mut session = Session::from_messages(&self.messages);
+        session.id = self.current_session_id.clone();
+        let json = serde_json::to_string_pretty(&session)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(filename, json)
     }
@@ -262,12 +365,90 @@ impl<'a> App<'a> {
     /// Load session from file
     fn load_session(&mut self, filename: &str) -> std::io::Result<()> {
         let json = std::fs::read_to_string(filename)?;
-        let messages: Vec<Message> = serde_json::from_str(&json)
+        let session: Session = serde_json::from_str(&json)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        // Keep system prompt, add loaded messages
         self.messages.retain(|m| m.role == crate::message::MessageRole::System);
-        self.messages.extend(messages);
+        self.messages.extend(session.messages);
+        self.current_session_id = session.id;
         Ok(())
+    }
+
+    /// Get sessions directory
+    pub fn sessions_dir() -> Option<std::path::PathBuf> {
+        dirs::data_dir().map(|d| d.join("sabi").join("sessions"))
+    }
+
+    /// Get path for a specific session
+    fn session_path(id: &str) -> Option<std::path::PathBuf> {
+        Self::sessions_dir().map(|d| d.join(format!("{}.json", id)))
+    }
+
+    /// List all saved sessions
+    pub fn list_sessions() -> Vec<Session> {
+        let Some(dir) = Self::sessions_dir() else { return Vec::new() };
+        let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+        
+        let mut sessions: Vec<Session> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|e| {
+                std::fs::read_to_string(e.path()).ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+            })
+            .collect();
+        
+        sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        sessions
+    }
+
+    /// Save current session
+    pub fn save_current_session(&self) {
+        if let Some(dir) = Self::sessions_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Some(path) = Self::session_path(&self.current_session_id) {
+                let _ = self.save_session(path.to_string_lossy().as_ref());
+            }
+        }
+    }
+
+    /// Switch to a different session
+    pub fn switch_session(&mut self, id: &str) -> std::io::Result<()> {
+        // Save current first
+        self.save_current_session();
+        
+        // Load new session
+        let path = Self::session_path(id)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Invalid path"))?;
+        self.load_session(path.to_string_lossy().as_ref())
+    }
+
+    /// Start a new session
+    pub fn new_session(&mut self) {
+        self.save_current_session();
+        self.messages.retain(|m| m.role == MessageRole::System);
+        self.current_session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    }
+
+    /// Delete a session
+    pub fn delete_session(id: &str) -> std::io::Result<()> {
+        if let Some(path) = Self::session_path(id) {
+            std::fs::remove_file(path)
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Session not found"))
+        }
+    }
+
+    /// Auto-save session to default location
+    pub fn auto_save(&self) {
+        self.save_current_session();
+    }
+
+    /// Auto-load most recent session
+    pub fn auto_load(&mut self) {
+        let sessions = Self::list_sessions();
+        if let Some(latest) = sessions.first() {
+            let _ = self.switch_session(&latest.id);
+        }
     }
 
     /// Advance the spinner animation
@@ -385,23 +566,24 @@ impl<'a> App<'a> {
 
     /// Handle keyboard events in Executing state (input blocked)
     fn handle_executing_state(&mut self, key: KeyEvent) -> InputResult {
-        // Only allow Escape for emergency quit
-        if key.code == KeyCode::Esc {
-            self.should_quit = true;
-            InputResult::Quit
-        } else {
-            InputResult::Blocked
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel and go back to input
+                self.cancel_task();
+                InputResult::CancelCommand
+            }
+            _ => InputResult::Blocked,
         }
     }
 
     /// Handle keyboard events in Finalizing state (input blocked)
     fn handle_finalizing_state(&mut self, key: KeyEvent) -> InputResult {
-        // Only allow Escape for emergency quit
-        if key.code == KeyCode::Esc {
-            self.should_quit = true;
-            InputResult::Quit
-        } else {
-            InputResult::Blocked
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_task();
+                InputResult::CancelCommand
+            }
+            _ => InputResult::Blocked,
         }
     }
 
