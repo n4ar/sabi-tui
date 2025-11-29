@@ -48,6 +48,60 @@ fn print_help() {
     println!("  --help, -h   Show this help message");
 }
 
+/// Get system context for AI
+fn get_system_context() -> String {
+    let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".into());
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "unknown".into());
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+    
+    let (os_name, os_version) = get_os_info();
+    
+    format!(
+        "SYSTEM CONTEXT:\n\
+         - Current time: {}\n\
+         - User: {}\n\
+         - Shell: {}\n\
+         - Working directory: {}\n\
+         - OS: {} {}",
+        time, user, shell, cwd, os_name, os_version
+    )
+}
+
+fn get_os_info() -> (String, String) {
+    #[cfg(target_os = "macos")]
+    {
+        let version = std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".into());
+        ("macOS".into(), version)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let version = std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("PRETTY_NAME="))
+                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+            })
+            .unwrap_or_else(|| "Linux".into());
+        ("Linux".into(), version)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        ("Windows".into(), "".into())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        ("Unknown".into(), "".into())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -90,11 +144,14 @@ async fn main() -> Result<()> {
     let mut app = App::new(config.clone());
     let mut events = EventHandler::new(TICK_RATE);
     
+    // Gather system context
+    let system_context = get_system_context();
+    
     // Build system prompt (include Python tool if available)
     let system_prompt = if app.python_available {
-        format!("{}\n\n5. Run Python code:\n   {{\"tool\": \"run_python\", \"code\": \"<python code>\"}}\n\nEXAMPLE:\n- \"calculate 2^100\" → {{\"tool\": \"run_python\", \"code\": \"print(2**100)\"}}", SYSTEM_PROMPT)
+        format!("{}\n\n5. Run Python code:\n   {{\"tool\": \"run_python\", \"code\": \"<python code>\"}}\n\nEXAMPLE:\n- \"calculate 2^100\" → {{\"tool\": \"run_python\", \"code\": \"print(2**100)\"}}\n\n{}", SYSTEM_PROMPT, system_context)
     } else {
-        SYSTEM_PROMPT.to_string()
+        format!("{}\n\n{}", SYSTEM_PROMPT, system_context)
     };
     app.add_message(Message::system(&system_prompt));
     
