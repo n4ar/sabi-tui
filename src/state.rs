@@ -4,9 +4,10 @@
 //! All transition functions are pure (no IO) for testability.
 
 /// Application states following the ReAct pattern
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
     /// User typing initial query
+    #[default]
     Input,
 
     /// Waiting for AI response (show spinner)
@@ -23,12 +24,6 @@ pub enum AppState {
 
     /// Final summary displayed
     Done,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::Input
-    }
 }
 
 impl AppState {
