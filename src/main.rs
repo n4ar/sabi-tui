@@ -53,6 +53,40 @@ fn print_version() {
     println!("sabi {}", VERSION);
 }
 
+/// Check for updates from crates.io (non-blocking)
+fn check_for_updates() {
+    std::thread::spawn(|| {
+        if let Ok(latest) = fetch_latest_version()
+            && is_newer(&latest, VERSION)
+        {
+            eprintln!(
+                "\n📦 Update available: {} → {}\n   Run: cargo install sabi-tui\n",
+                VERSION, latest
+            );
+        }
+    });
+}
+
+fn fetch_latest_version() -> Result<String, ()> {
+    let resp = reqwest::blocking::Client::new()
+        .get("https://crates.io/api/v1/crates/sabi-tui")
+        .header("User-Agent", format!("sabi-tui/{}", VERSION))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .map_err(|_| ())?;
+
+    let json: serde_json::Value = resp.json().map_err(|_| ())?;
+    json["crate"]["max_version"]
+        .as_str()
+        .map(String::from)
+        .ok_or(())
+}
+
+fn is_newer(latest: &str, current: &str) -> bool {
+    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
+    parse(latest) > parse(current)
+}
+
 /// Get system context for AI
 fn get_system_context() -> String {
     let time = chrono::Local::now()
@@ -114,6 +148,9 @@ fn get_os_info() -> (String, String) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for updates in background
+    check_for_updates();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();
