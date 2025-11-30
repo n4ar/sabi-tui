@@ -89,4 +89,3 @@ impl EventHandler {
         self.tx.clone()
     }
 }
-

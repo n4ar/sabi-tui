@@ -77,14 +77,14 @@ impl ImageData {
     /// Load image from file path
     pub fn from_file(path: &str) -> std::io::Result<Self> {
         use std::io::Read;
-        
+
         let mut file = std::fs::File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
-        
+
         let base64 = base64_encode(&buffer);
         let mime_type = mime_from_path(path);
-        
+
         Ok(Self { base64, mime_type })
     }
 }
@@ -109,16 +109,28 @@ const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 
 impl<W: std::io::Write> Base64Encoder<W> {
     fn new(writer: W) -> Self {
-        Self { writer, buf: [0; 3], buf_len: 0 }
+        Self {
+            writer,
+            buf: [0; 3],
+            buf_len: 0,
+        }
     }
-    
+
     fn encode_block(&mut self) -> std::io::Result<()> {
         let b = &self.buf;
         let out = [
             BASE64_CHARS[(b[0] >> 2) as usize],
             BASE64_CHARS[(((b[0] & 0x03) << 4) | (b[1] >> 4)) as usize],
-            if self.buf_len > 1 { BASE64_CHARS[(((b[1] & 0x0f) << 2) | (b[2] >> 6)) as usize] } else { b'=' },
-            if self.buf_len > 2 { BASE64_CHARS[(b[2] & 0x3f) as usize] } else { b'=' },
+            if self.buf_len > 1 {
+                BASE64_CHARS[(((b[1] & 0x0f) << 2) | (b[2] >> 6)) as usize]
+            } else {
+                b'='
+            },
+            if self.buf_len > 2 {
+                BASE64_CHARS[(b[2] & 0x3f) as usize]
+            } else {
+                b'='
+            },
         ];
         self.writer.write_all(&out)
     }
@@ -137,7 +149,9 @@ impl<W: std::io::Write> std::io::Write for Base64Encoder<W> {
         }
         Ok(data.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { self.writer.flush() }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
 }
 
 impl<W: std::io::Write> Drop for Base64Encoder<W> {
@@ -156,7 +170,8 @@ fn mime_from_path(path: &str) -> String {
         "gif" => "image/gif",
         "webp" => "image/webp",
         _ => "application/octet-stream",
-    }.to_string()
+    }
+    .to_string()
 }
 
 // Gemini API types for serialization
@@ -184,12 +199,8 @@ pub struct GeminiContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GeminiPart {
-    Text {
-        text: String,
-    },
-    Image {
-        inline_data: GeminiInlineData,
-    },
+    Text { text: String },
+    Image { inline_data: GeminiInlineData },
 }
 
 /// Inline image data for Gemini API
@@ -203,7 +214,7 @@ impl GeminiPart {
     pub fn text(s: impl Into<String>) -> Self {
         GeminiPart::Text { text: s.into() }
     }
-    
+
     pub fn image(mime_type: String, base64_data: String) -> Self {
         GeminiPart::Image {
             inline_data: GeminiInlineData {
@@ -351,7 +362,7 @@ mod tests {
             Message::model("Hi!"),
         ];
         let request = messages_to_gemini_request(&messages);
-        
+
         assert!(request.system_instruction.is_some());
         assert_eq!(request.contents.len(), 2);
         assert_eq!(request.contents[0].role, "user");
@@ -360,16 +371,12 @@ mod tests {
 
     // Strategy to generate arbitrary MessageRole (excluding System for round-trip)
     fn arb_message_role() -> impl Strategy<Value = MessageRole> {
-        prop_oneof![
-            Just(MessageRole::User),
-            Just(MessageRole::Model),
-        ]
+        prop_oneof![Just(MessageRole::User), Just(MessageRole::Model),]
     }
 
     // Strategy to generate arbitrary Message
     fn arb_message() -> impl Strategy<Value = Message> {
-        (arb_message_role(), ".*")
-            .prop_map(|(role, content)| Message::new(role, content))
+        (arb_message_role(), ".*").prop_map(|(role, content)| Message::new(role, content))
     }
 
     // Strategy to generate a vector of messages (alternating user/model for valid conversation)

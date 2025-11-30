@@ -3,8 +3,8 @@
 //! Handles loading configuration from files and environment variables.
 
 use serde::Deserialize;
-use thiserror::Error;
 use std::path::PathBuf;
+use thiserror::Error;
 
 /// Configuration errors
 #[derive(Debug, Error)]
@@ -170,36 +170,32 @@ impl Config {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         let provider_str = match self.provider {
             Provider::Gemini => "gemini",
             Provider::OpenAI => "openai",
         };
-        
+
         let mut content = format!(
             r#"provider = "{}"
 api_key = "{}"
 model = "{}"
 "#,
-            provider_str,
-            self.api_key,
-            self.model,
+            provider_str, self.api_key, self.model,
         );
-        
+
         if let Some(ref url) = self.base_url {
             content.push_str(&format!("base_url = \"{}\"\n", url));
         }
-        
+
         content.push_str(&format!(
             r#"max_history_messages = {}
 max_output_bytes = {}
 max_output_lines = {}
 "#,
-            self.max_history_messages,
-            self.max_output_bytes,
-            self.max_output_lines
+            self.max_history_messages, self.max_output_bytes, self.max_output_lines
         ));
-        
+
         std::fs::write(&config_path, content)?;
         Ok(())
     }
@@ -239,8 +235,8 @@ max_output_lines = {}
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use tempfile::TempDir;
     use std::sync::Mutex;
+    use tempfile::TempDir;
 
     // Global mutex to serialize tests that modify environment variables
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -268,7 +264,7 @@ mod tests {
             // Create a temp config file
             let temp_dir = TempDir::new().unwrap();
             let config_path = temp_dir.path().join("config.toml");
-            
+
             let config_content = format!(
                 r#"
 api_key = "{}"
@@ -321,7 +317,7 @@ max_history_messages = {}
             // Create a temp config file
             let temp_dir = TempDir::new().unwrap();
             let config_path = temp_dir.path().join("config.toml");
-            
+
             let config_content = format!(
                 r#"
 api_key = "{}"

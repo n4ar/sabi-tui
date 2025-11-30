@@ -57,7 +57,9 @@ impl OpenAIClient {
             return Err(OpenAIError::MissingApiKey);
         }
 
-        let base_url = config.base_url.clone()
+        let base_url = config
+            .base_url
+            .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         Ok(Self {
@@ -89,7 +91,8 @@ impl OpenAIClient {
                     MessageRole::User => "user",
                     MessageRole::Model => "assistant",
                     MessageRole::System => "system",
-                }.to_string(),
+                }
+                .to_string(),
                 content: msg.content.clone(),
             });
         }
@@ -99,7 +102,8 @@ impl OpenAIClient {
             messages: chat_messages,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")

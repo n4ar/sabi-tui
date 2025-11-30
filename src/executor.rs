@@ -70,9 +70,9 @@ impl CommandExecutor {
 
     /// Execute Python code
     pub fn run_python(&self, code: &str) -> CommandResult {
-        use std::process::Command;
         use std::io::Write;
-        
+        use std::process::Command;
+
         let mut child = match Command::new("python3")
             .arg("-c")
             .arg(code)
@@ -81,33 +81,35 @@ impl CommandExecutor {
             .spawn()
         {
             Ok(c) => c,
-            Err(e) => return CommandResult {
-                stdout: String::new(),
-                stderr: format!("Failed to start Python: {}", e),
-                exit_code: 1,
-                success: false,
-                truncated: false,
-            },
+            Err(e) => {
+                return CommandResult {
+                    stdout: String::new(),
+                    stderr: format!("Failed to start Python: {}", e),
+                    exit_code: 1,
+                    success: false,
+                    truncated: false,
+                };
+            }
         };
-        
+
         let output = match child.wait_with_output() {
             Ok(o) => o,
-            Err(e) => return CommandResult {
-                stdout: String::new(),
-                stderr: format!("Python execution failed: {}", e),
-                exit_code: 1,
-                success: false,
-                truncated: false,
-            },
+            Err(e) => {
+                return CommandResult {
+                    stdout: String::new(),
+                    stderr: format!("Python execution failed: {}", e),
+                    exit_code: 1,
+                    success: false,
+                    truncated: false,
+                };
+            }
         };
-        
-        let (stdout, stdout_truncated) = self.truncate_output(
-            String::from_utf8_lossy(&output.stdout).to_string()
-        );
-        let (stderr, stderr_truncated) = self.truncate_output(
-            String::from_utf8_lossy(&output.stderr).to_string()
-        );
-        
+
+        let (stdout, stdout_truncated) =
+            self.truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
+        let (stderr, stderr_truncated) =
+            self.truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
+
         CommandResult {
             stdout,
             stderr,
@@ -178,10 +180,7 @@ impl CommandExecutor {
             ("sh", "-c")
         };
 
-        let output = Command::new(shell.0)
-            .arg(shell.1)
-            .arg(command)
-            .output();
+        let output = Command::new(shell.0).arg(shell.1).arg(command).output();
 
         match output {
             Ok(output) => {
@@ -225,12 +224,10 @@ impl CommandExecutor {
 
         match output {
             Ok(output) => {
-                let (stdout, stdout_truncated) = self.truncate_output(
-                    String::from_utf8_lossy(&output.stdout).to_string()
-                );
-                let (stderr, stderr_truncated) = self.truncate_output(
-                    String::from_utf8_lossy(&output.stderr).to_string()
-                );
+                let (stdout, stdout_truncated) =
+                    self.truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
+                let (stderr, stderr_truncated) =
+                    self.truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
                 CommandResult {
                     stdout,
                     stderr,
@@ -257,11 +254,18 @@ impl CommandExecutor {
             // These are fast, no need for async
             "read_file" => self.read_file(&tool.path),
             "write_file" => self.write_file(&tool.path, &tool.content),
-            "search" => self.execute_async(&format!(
-                "find {} -name '{}' 2>/dev/null | head -100",
-                if tool.directory.is_empty() { "." } else { &tool.directory },
-                tool.pattern
-            )).await,
+            "search" => {
+                self.execute_async(&format!(
+                    "find {} -name '{}' 2>/dev/null | head -100",
+                    if tool.directory.is_empty() {
+                        "."
+                    } else {
+                        &tool.directory
+                    },
+                    tool.pattern
+                ))
+                .await
+            }
             _ => CommandResult {
                 stdout: String::new(),
                 stderr: format!("Unknown tool: {}", tool.tool),
@@ -282,12 +286,10 @@ impl CommandExecutor {
 
         match output {
             Ok(output) => {
-                let (stdout, stdout_truncated) = self.truncate_output(
-                    String::from_utf8_lossy(&output.stdout).to_string()
-                );
-                let (stderr, stderr_truncated) = self.truncate_output(
-                    String::from_utf8_lossy(&output.stderr).to_string()
-                );
+                let (stdout, stdout_truncated) =
+                    self.truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
+                let (stderr, stderr_truncated) =
+                    self.truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
                 CommandResult {
                     stdout,
                     stderr,
@@ -349,10 +351,7 @@ impl DangerousCommandDetector {
     /// Create a new detector with patterns from config
     pub fn new(patterns: &[String]) -> Self {
         Self {
-            patterns: patterns
-                .iter()
-                .filter_map(|p| Regex::new(p).ok())
-                .collect(),
+            patterns: patterns.iter().filter_map(|p| Regex::new(p).ok()).collect(),
         }
     }
 
@@ -390,12 +389,12 @@ pub struct InteractiveCommandDetector {
 impl InteractiveCommandDetector {
     pub fn new() -> Self {
         let patterns = [
-            r"^(nano|vim?|emacs|pico|ne|joe)\b",  // editors
-            r"^(ssh|telnet|ftp|sftp)\b",          // remote sessions
-            r"^(htop|top|less|more|man)\b",       // pagers/monitors
+            r"^(nano|vim?|emacs|pico|ne|joe)\b", // editors
+            r"^(ssh|telnet|ftp|sftp)\b",         // remote sessions
+            r"^(htop|top|less|more|man)\b",      // pagers/monitors
             r"^(mysql|psql|sqlite3|mongo)\b",    // database CLIs
-            r"^(python|node|irb|ghci)$",          // REPLs (no args)
-            r"\b(docker|podman)\s+.*\s-it\b",     // interactive containers
+            r"^(python|node|irb|ghci)$",         // REPLs (no args)
+            r"\b(docker|podman)\s+.*\s-it\b",    // interactive containers
         ];
         Self {
             patterns: patterns.iter().filter_map(|p| Regex::new(p).ok()).collect(),
@@ -418,7 +417,6 @@ impl InteractiveCommandDetector {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -551,12 +549,12 @@ mod tests {
         ) {
             let max_bytes = 50;
             let executor = CommandExecutor::with_limits(max_bytes, 1000);
-            
+
             // Create a string that exceeds max_bytes
             let content = "x".repeat(repeat_count);
-            
+
             let (truncated_output, was_truncated) = executor.truncate_output(content.clone());
-            
+
             if content.len() > max_bytes {
                 prop_assert!(was_truncated, "should be truncated when exceeding byte limit");
                 // The truncated output (minus the truncation message) should be <= max_bytes
@@ -579,15 +577,15 @@ mod tests {
         ) {
             let max_lines = 10;
             let executor = CommandExecutor::with_limits(100_000, max_lines);
-            
+
             // Create content with line_count lines
             let content: String = (0..line_count)
                 .map(|i| format!("line{}", i))
                 .collect::<Vec<_>>()
                 .join("\n");
-            
+
             let (truncated_output, was_truncated) = executor.truncate_output(content.clone());
-            
+
             if line_count > max_lines {
                 prop_assert!(was_truncated, "should be truncated when exceeding line limit");
                 // Count lines in output (excluding truncation message)
@@ -612,16 +610,16 @@ mod tests {
         ) {
             let max_bytes = 50;
             let executor = CommandExecutor::with_limits(max_bytes, 1000);
-            
+
             // Create a string with multi-byte UTF-8 characters (emoji)
             let content = "🎉".repeat(char_count);
-            
+
             let (truncated_output, _) = executor.truncate_output(content);
-            
+
             // The output should be valid UTF-8 (this is guaranteed by String type)
             // But we verify it doesn't panic and produces valid output
             prop_assert!(truncated_output.is_ascii() || !truncated_output.is_empty() || truncated_output.len() >= 0);
-            
+
             // Verify we can iterate over chars without panic
             let _ = truncated_output.chars().count();
         }
@@ -634,17 +632,17 @@ mod tests {
             let max_bytes = 100;
             let max_lines = 20;
             let executor = CommandExecutor::with_limits(max_bytes, max_lines);
-            
+
             // Create content within limits
             let lines: Vec<String> = (0..line_count)
                 .map(|_| "x".repeat(content_len.min(max_bytes / (line_count + 1))))
                 .collect();
             let content = lines.join("\n");
-            
+
             // Only test if content is actually within limits
             if content.len() <= max_bytes && line_count <= max_lines {
                 let (truncated_output, was_truncated) = executor.truncate_output(content.clone());
-                
+
                 prop_assert!(!was_truncated, "should not truncate content within limits");
                 prop_assert_eq!(truncated_output, content, "content should be unchanged");
             }
@@ -655,9 +653,9 @@ mod tests {
     fn test_truncation_message_appended() {
         let executor = CommandExecutor::with_limits(10, 1000);
         let content = "x".repeat(100);
-        
+
         let (truncated_output, was_truncated) = executor.truncate_output(content);
-        
+
         assert!(was_truncated);
         assert!(truncated_output.contains("[Output truncated due to size limits]"));
     }
@@ -667,9 +665,13 @@ mod tests {
         let executor = CommandExecutor::with_limits(100, 10);
         // Generate output that exceeds limits
         let result = executor.execute("seq 1 100");
-        
+
         assert!(result.truncated, "large output should be truncated");
-        assert!(result.stdout.contains("[Output truncated due to size limits]"));
+        assert!(
+            result
+                .stdout
+                .contains("[Output truncated due to size limits]")
+        );
     }
 
     // **Feature: agent-rs, Property 20: Dangerous Command Detection**
@@ -688,13 +690,13 @@ mod tests {
             path_suffix in prop::option::of("[a-z]{0,5}"),
         ) {
             let detector = DangerousCommandDetector::with_defaults();
-            
+
             // Build command with varying whitespace
             let spaces1 = " ".repeat(spaces_before);
             let spaces2 = " ".repeat(spaces_after);
             let suffix = path_suffix.unwrap_or_default();
             let command = format!("{}rm{}-rf{}/{}", spaces1, spaces2, spaces2, suffix);
-            
+
             prop_assert!(
                 detector.is_dangerous(&command),
                 "rm -rf / variants should be detected as dangerous: '{}'",
@@ -709,12 +711,12 @@ mod tests {
             fs_type in prop::option::of("(ext4|xfs|btrfs|ntfs)"),
         ) {
             let detector = DangerousCommandDetector::with_defaults();
-            
+
             let command = match fs_type {
                 Some(fs) => format!("mkfs.{} /dev/{}", fs, device),
                 None => format!("mkfs /dev/{}", device),
             };
-            
+
             prop_assert!(
                 detector.is_dangerous(&command),
                 "mkfs commands should be detected as dangerous: '{}'",
@@ -729,9 +731,9 @@ mod tests {
             output_file in "[a-z/]{1,10}",
         ) {
             let detector = DangerousCommandDetector::with_defaults();
-            
+
             let command = format!("dd if={} of={}", input_file, output_file);
-            
+
             prop_assert!(
                 detector.is_dangerous(&command),
                 "dd if= commands should be detected as dangerous: '{}'",
@@ -746,9 +748,9 @@ mod tests {
             args in "[a-zA-Z0-9 ._/-]{0,20}",
         ) {
             let detector = DangerousCommandDetector::with_defaults();
-            
+
             let command = format!("{} {}", cmd, args);
-            
+
             prop_assert!(
                 !detector.is_dangerous(&command),
                 "safe commands should not be flagged as dangerous: '{}'",
@@ -764,7 +766,7 @@ mod tests {
         ) {
             let patterns = vec![format!(r"{}", pattern_word)];
             let detector = DangerousCommandDetector::new(&patterns);
-            
+
             // Command containing the pattern word should be detected
             let dangerous_cmd = format!("{} {} something", command_prefix, pattern_word);
             prop_assert!(
@@ -772,7 +774,7 @@ mod tests {
                 "command containing pattern should be dangerous: '{}'",
                 dangerous_cmd
             );
-            
+
             // Command not containing the pattern should be safe
             let safe_cmd = format!("{} safe_word", command_prefix);
             if !safe_cmd.contains(&pattern_word) {
@@ -788,7 +790,7 @@ mod tests {
     #[test]
     fn test_fork_bomb_detected() {
         let detector = DangerousCommandDetector::with_defaults();
-        
+
         // Classic fork bomb pattern
         assert!(detector.is_dangerous(":() { :|:& };:"));
         assert!(detector.is_dangerous(":(){ :|:& };:"));
@@ -797,7 +799,7 @@ mod tests {
     #[test]
     fn test_write_to_dev_sd_detected() {
         let detector = DangerousCommandDetector::with_defaults();
-        
+
         assert!(detector.is_dangerous("cat file > /dev/sda"));
         assert!(detector.is_dangerous("echo test > /dev/sdb1"));
     }
@@ -805,7 +807,7 @@ mod tests {
     #[test]
     fn test_empty_patterns_allows_all() {
         let detector = DangerousCommandDetector::new(&[]);
-        
+
         // With no patterns, nothing should be flagged
         assert!(!detector.is_dangerous("rm -rf /"));
         assert!(!detector.is_dangerous("mkfs /dev/sda"));
@@ -814,10 +816,10 @@ mod tests {
     #[test]
     fn test_matching_patterns_returns_matches() {
         let detector = DangerousCommandDetector::with_defaults();
-        
+
         let matches = detector.matching_patterns("rm -rf /home");
         assert_eq!(matches.len(), 1);
-        
+
         let no_matches = detector.matching_patterns("ls -la");
         assert!(no_matches.is_empty());
     }
@@ -826,7 +828,7 @@ mod tests {
     #[test]
     fn test_interactive_editors_detected() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(detector.is_interactive("nano file.txt"));
         assert!(detector.is_interactive("vim file.txt"));
         assert!(detector.is_interactive("vi file.txt"));
@@ -837,7 +839,7 @@ mod tests {
     #[test]
     fn test_interactive_remote_detected() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(detector.is_interactive("ssh user@host"));
         assert!(detector.is_interactive("telnet host"));
         assert!(detector.is_interactive("ftp host"));
@@ -847,7 +849,7 @@ mod tests {
     #[test]
     fn test_interactive_pagers_detected() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(detector.is_interactive("htop"));
         assert!(detector.is_interactive("top"));
         assert!(detector.is_interactive("less file.txt"));
@@ -859,7 +861,7 @@ mod tests {
     #[test]
     fn test_interactive_docker_detected() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(detector.is_interactive("docker run -it ubuntu"));
         assert!(detector.is_interactive("podman run -it alpine"));
     }
@@ -868,7 +870,7 @@ mod tests {
     #[test]
     fn test_non_interactive_commands_pass() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(!detector.is_interactive("ls -la"));
         assert!(!detector.is_interactive("cat file.txt"));
         assert!(!detector.is_interactive("grep pattern file"));
@@ -881,7 +883,7 @@ mod tests {
     #[test]
     fn test_interactive_suggestions() {
         let detector = InteractiveCommandDetector::new();
-        
+
         assert!(detector.suggestion("nano").is_some());
         assert!(detector.suggestion("vim").is_some());
         assert!(detector.suggestion("less").is_some());
@@ -901,7 +903,7 @@ mod tests {
         ) {
             let detector = InteractiveCommandDetector::new();
             let cmd = format!("{}{} file.txt", spaces, editor);
-            
+
             // Should still detect after trimming
             prop_assert!(
                 detector.is_interactive(&cmd),

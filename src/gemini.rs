@@ -71,7 +71,6 @@ pub enum GeminiError {
     EmptyResponse,
 }
 
-
 /// Client for interacting with the Gemini API
 #[derive(Clone)]
 pub struct GeminiClient {
@@ -101,7 +100,11 @@ impl GeminiClient {
     }
 
     /// Create a GeminiClient with custom parameters (for testing)
-    pub fn with_params(api_key: String, model: String, max_history_messages: usize) -> Result<Self, GeminiError> {
+    pub fn with_params(
+        api_key: String,
+        model: String,
+        max_history_messages: usize,
+    ) -> Result<Self, GeminiError> {
         if api_key.is_empty() {
             return Err(GeminiError::MissingApiKey);
         }
@@ -198,12 +201,12 @@ impl GeminiClient {
                 }
                 _ => {
                     let mut parts = vec![GeminiPart::text(&msg.content)];
-                    
+
                     // Add image if present
                     if let Some(ref img) = msg.image {
                         parts.push(GeminiPart::image(img.mime_type.clone(), img.base64.clone()));
                     }
-                    
+
                     contents.push(GeminiContent {
                         role: match msg.role {
                             MessageRole::User => "user".to_string(),
@@ -299,7 +302,6 @@ impl GeminiClient {
         Ok(models)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -545,10 +547,7 @@ mod tests {
             max_history_messages: 10,
         };
 
-        let messages = vec![
-            Message::system("Be helpful"),
-            Message::user("Hello"),
-        ];
+        let messages = vec![Message::system("Be helpful"), Message::user("Hello")];
 
         let refs: Vec<&Message> = messages.iter().collect();
         let request = client.build_request(&refs);
@@ -590,9 +589,7 @@ mod tests {
             max_history_messages: 10,
         };
 
-        let response = GeminiResponse {
-            candidates: vec![],
-        };
+        let response = GeminiResponse { candidates: vec![] };
 
         let result = client.extract_text(&response);
         assert!(matches!(result, Err(GeminiError::EmptyResponse)));

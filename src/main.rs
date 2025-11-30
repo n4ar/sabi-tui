@@ -53,15 +53,17 @@ fn print_version() {
 
 /// Get system context for AI
 fn get_system_context() -> String {
-    let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
+    let time = chrono::Local::now()
+        .format("%Y-%m-%d %H:%M:%S %Z")
+        .to_string();
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".into());
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "unknown".into());
     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
-    
+
     let (os_name, os_version) = get_os_info();
-    
+
     format!(
         "SYSTEM CONTEXT:\n\
          - Current time: {}\n\
@@ -88,9 +90,11 @@ fn get_os_info() -> (String, String) {
         let version = std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| {
+                    l.trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string()
+                })
             })
             .unwrap_or_else(|| "Linux".into());
         ("Linux".into(), version)
@@ -108,19 +112,19 @@ fn get_os_info() -> (String, String) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();
         return Ok(());
     }
-    
+
     if args.iter().any(|a| a == "--version" || a == "-v") {
         print_version();
         return Ok(());
     }
-    
+
     let mut config = Config::load().context("Failed to load configuration")?;
-    
+
     // CLI flag overrides config
     if args.iter().any(|a| a == "--safe") {
         config.safe_mode = true;
@@ -139,18 +143,21 @@ async fn main() -> Result<()> {
 
     let mut app = App::new(config.clone());
     let mut events = EventHandler::new(TICK_RATE);
-    
+
     // Gather system context
     let system_context = get_system_context();
-    
+
     // Build system prompt (include Python tool if available)
     let system_prompt = if app.python_available {
-        format!("{}\n\n5. Run Python code:\n   {{\"tool\": \"run_python\", \"code\": \"<python code>\"}}\n\nEXAMPLE:\n- \"calculate 2^100\" → {{\"tool\": \"run_python\", \"code\": \"print(2**100)\"}}\n\n{}", SYSTEM_PROMPT, system_context)
+        format!(
+            "{}\n\n5. Run Python code:\n   {{\"tool\": \"run_python\", \"code\": \"<python code>\"}}\n\nEXAMPLE:\n- \"calculate 2^100\" → {{\"tool\": \"run_python\", \"code\": \"print(2**100)\"}}\n\n{}",
+            SYSTEM_PROMPT, system_context
+        )
     } else {
         format!("{}\n\n{}", SYSTEM_PROMPT, system_context)
     };
     app.add_message(Message::system(&system_prompt));
-    
+
     // Auto-load previous session
     app.auto_load();
 
@@ -158,7 +165,15 @@ async fn main() -> Result<()> {
     let detector = DangerousCommandDetector::new(&config.dangerous_patterns);
     let interactive_detector = InteractiveCommandDetector::new();
 
-    let result = run_loop(&mut terminal, &mut app, &mut events, ai_client, detector, interactive_detector).await;
+    let result = run_loop(
+        &mut terminal,
+        &mut app,
+        &mut events,
+        ai_client,
+        detector,
+        interactive_detector,
+    )
+    .await;
 
     // Auto-save session before exit
     app.auto_save();
@@ -188,14 +203,14 @@ async fn run_loop(
             match event {
                 Event::Key(key) => {
                     let result = app.handle_key_event(key);
-                    
+
                     // Handle command cancellation
                     if result == InputResult::CancelCommand {
                         app.add_message(Message::system("⚠️ Command cancelled"));
                         app.transition(StateEvent::AnalysisComplete);
                         continue;
                     }
-                    
+
                     // Handle /model command
                     if let InputResult::FetchModels(model_arg) = result.clone() {
                         if let Some(ref client) = ai_client {
@@ -210,7 +225,7 @@ async fn run_loop(
                         }
                         continue;
                     }
-                    
+
                     // 12.1: Input → Thinking transition
                     if result == InputResult::SubmitQuery {
                         if let Some(ref client) = ai_client {
@@ -226,7 +241,7 @@ async fn run_loop(
                             app.transition(StateEvent::ApiError);
                         }
                     }
-                    
+
                     // 12.4: ReviewAction → Executing transition
                     if result == InputResult::ExecuteCommand {
                         if let Some(ref tool) = app.current_tool {
@@ -236,11 +251,21 @@ async fn run_loop(
                                     "run_cmd" => format!("Would run: {}", tool.command),
                                     "run_python" => format!("Would run Python:\n{}", tool.code),
                                     "read_file" => format!("Would read: {}", tool.path),
-                                    "write_file" => format!("Would write {} bytes to: {}", tool.content.len(), tool.path),
-                                    "search" => format!("Would search '{}' in {}", tool.pattern, tool.directory),
+                                    "write_file" => format!(
+                                        "Would write {} bytes to: {}",
+                                        tool.content.len(),
+                                        tool.path
+                                    ),
+                                    "search" => format!(
+                                        "Would search '{}' in {}",
+                                        tool.pattern, tool.directory
+                                    ),
                                     _ => format!("Would execute: {:?}", tool),
                                 };
-                                app.add_message(Message::system(&format!("🔒 [SAFE MODE] {}", desc)));
+                                app.add_message(Message::system(&format!(
+                                    "🔒 [SAFE MODE] {}",
+                                    desc
+                                )));
                                 app.transition(StateEvent::AnalysisComplete);
                             } else {
                                 let tool = tool.clone();
@@ -259,13 +284,13 @@ async fn run_loop(
                     app.tick_spinner();
                 }
                 Event::Resize(_, _) => {}
-                
+
                 // 12.2: Thinking → ReviewAction/Input transition
                 Event::ApiResponse(response) => {
                     match response {
                         Ok(text) => {
                             app.add_message(Message::model(&text));
-                            
+
                             match ParsedResponse::parse(&text) {
                                 ParsedResponse::ToolCall(tc) => {
                                     // Format display text based on tool type
@@ -273,15 +298,31 @@ async fn run_loop(
                                         "run_cmd" => tc.command.clone(),
                                         "run_python" => format!("python:\n{}", tc.code),
                                         "read_file" => format!("read_file: {}", tc.path),
-                                        "write_file" => format!("write_file: {} ({} bytes)", tc.path, tc.content.len()),
-                                        "search" => format!("search: {} in {}", tc.pattern, if tc.directory.is_empty() { "." } else { &tc.directory }),
+                                        "write_file" => format!(
+                                            "write_file: {} ({} bytes)",
+                                            tc.path,
+                                            tc.content.len()
+                                        ),
+                                        "search" => format!(
+                                            "search: {} in {}",
+                                            tc.pattern,
+                                            if tc.directory.is_empty() {
+                                                "."
+                                            } else {
+                                                &tc.directory
+                                            }
+                                        ),
                                         _ => format!("{:?}", tc),
                                     };
-                                    
+
                                     // Check for interactive commands
-                                    if tc.is_run_cmd() && interactive_detector.is_interactive(&tc.command) {
-                                        let suggestion = interactive_detector.suggestion(&tc.command)
-                                            .unwrap_or("This command requires an interactive terminal");
+                                    if tc.is_run_cmd()
+                                        && interactive_detector.is_interactive(&tc.command)
+                                    {
+                                        let suggestion =
+                                            interactive_detector.suggestion(&tc.command).unwrap_or(
+                                                "This command requires an interactive terminal",
+                                            );
                                         app.add_message(Message::model(&format!(
                                             "⚠️ Cannot run interactive command: `{}`\n{}",
                                             tc.command, suggestion
@@ -289,7 +330,7 @@ async fn run_loop(
                                         app.transition(StateEvent::TextResponseReceived);
                                         continue;
                                     }
-                                    
+
                                     // Check Python availability
                                     if tc.tool == "run_python" && !app.python_available {
                                         app.add_message(Message::model(
@@ -298,14 +339,14 @@ async fn run_loop(
                                         app.transition(StateEvent::TextResponseReceived);
                                         continue;
                                     }
-                                    
+
                                     app.set_action_text(&display);
                                     app.current_tool = Some(tc.clone());
-                                    
+
                                     // Check for dangerous operations
-                                    app.dangerous_command_detected = tc.is_destructive() 
+                                    app.dangerous_command_detected = tc.is_destructive()
                                         || (tc.is_run_cmd() && detector.is_dangerous(&tc.command));
-                                    
+
                                     // Block unknown tools entirely
                                     if !tc.is_allowed_tool() {
                                         app.add_message(Message::system(&format!(
@@ -315,7 +356,7 @@ async fn run_loop(
                                         app.transition(StateEvent::TextResponseReceived);
                                         continue;
                                     }
-                                    
+
                                     app.transition(StateEvent::ToolCallReceived);
                                 }
                                 _ => {
@@ -329,7 +370,7 @@ async fn run_loop(
                         }
                     }
                 }
-                
+
                 // 12.5: Executing → Finalizing → Input loop
                 Event::CommandComplete(result) => {
                     app.running_task = None;
@@ -338,20 +379,30 @@ async fn run_loop(
                     } else {
                         format!("{}\n{}", result.stdout, result.stderr)
                     };
-                    
-                    let tool_desc = app.current_tool.as_ref()
-                        .map(|t| format!("{}: {}", t.tool, if t.tool == "run_cmd" { &t.command } else { &t.path }))
+
+                    let tool_desc = app
+                        .current_tool
+                        .as_ref()
+                        .map(|t| {
+                            format!(
+                                "{}: {}",
+                                t.tool,
+                                if t.tool == "run_cmd" {
+                                    &t.command
+                                } else {
+                                    &t.path
+                                }
+                            )
+                        })
                         .unwrap_or_default();
-                    
+
                     let feedback = format!(
                         "Tool: {}\nExit code: {}\nOutput:\n{}",
-                        tool_desc,
-                        result.exit_code,
-                        &app.execution_output
+                        tool_desc, result.exit_code, &app.execution_output
                     );
                     app.add_message(Message::user(&feedback));
                     app.transition(StateEvent::CommandComplete);
-                    
+
                     // Send to AI for analysis
                     if let Some(ref client) = ai_client {
                         let messages = app.messages.clone();
@@ -365,36 +416,58 @@ async fn run_loop(
                         app.transition(StateEvent::AnalysisComplete);
                     }
                 }
-                
+
                 Event::CommandCancelled => {
                     // Task was cancelled, already handled in key event
                 }
-                
+
                 Event::ModelsResponse(result, model_arg) => {
                     match result {
                         Ok(models) => {
                             if let Some(model_name) = model_arg {
                                 // Switch to specified model
-                                if let Some(matched) = models.iter().find(|m| m.contains(&model_name)) {
+                                if let Some(matched) =
+                                    models.iter().find(|m| m.contains(&model_name))
+                                {
                                     if let Some(ref mut client) = ai_client {
                                         client.set_model(matched.clone());
-                                        app.add_message(Message::system(&format!("✓ Switched to: {}", matched)));
+                                        app.add_message(Message::system(&format!(
+                                            "✓ Switched to: {}",
+                                            matched
+                                        )));
                                     }
                                 } else {
-                                    app.add_message(Message::system(&format!("✗ Model '{}' not found", model_name)));
+                                    app.add_message(Message::system(&format!(
+                                        "✗ Model '{}' not found",
+                                        model_name
+                                    )));
                                 }
                             } else {
                                 // List all models
-                                let current = ai_client.as_ref().map(|c| c.model()).unwrap_or("unknown");
-                                let list = models.iter()
-                                    .map(|m| if m == current { format!("→ {}", m) } else { format!("  {}", m) })
+                                let current =
+                                    ai_client.as_ref().map(|c| c.model()).unwrap_or("unknown");
+                                let list = models
+                                    .iter()
+                                    .map(|m| {
+                                        if m == current {
+                                            format!("→ {}", m)
+                                        } else {
+                                            format!("  {}", m)
+                                        }
+                                    })
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                app.add_message(Message::system(&format!("Available models:\n{}\n\nUse /model <name> to switch", list)));
+                                app.add_message(Message::system(&format!(
+                                    "Available models:\n{}\n\nUse /model <name> to switch",
+                                    list
+                                )));
                             }
                         }
                         Err(e) => {
-                            app.add_message(Message::system(&format!("✗ Failed to fetch models: {}", e)));
+                            app.add_message(Message::system(&format!(
+                                "✗ Failed to fetch models: {}",
+                                e
+                            )));
                         }
                     }
                 }

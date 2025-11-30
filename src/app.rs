@@ -42,7 +42,7 @@ impl Session {
         let id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
         Self {
             id: id.clone(),
-            name: format!("Session {}", &id[9..]),  // Use time part as name
+            name: format!("Session {}", &id[9..]), // Use time part as name
             timestamp: chrono::Local::now().to_rfc3339(),
             cwd: std::env::current_dir()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -53,7 +53,8 @@ impl Session {
 
     pub fn from_messages(messages: &[Message]) -> Self {
         let mut session = Self::new();
-        session.messages = messages.iter()
+        session.messages = messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
             .cloned()
             .collect();
@@ -62,11 +63,16 @@ impl Session {
 
     /// Get preview of first user message
     pub fn preview(&self) -> String {
-        self.messages.iter()
+        self.messages
+            .iter()
             .find(|m| m.role == MessageRole::User)
             .map(|m| {
                 let s: String = m.content.chars().take(40).collect();
-                if m.content.len() > 40 { format!("{}...", s) } else { s }
+                if m.content.len() > 40 {
+                    format!("{}...", s)
+                } else {
+                    s
+                }
             })
             .unwrap_or_else(|| "(empty)".to_string())
     }
@@ -134,9 +140,9 @@ impl<'a> App<'a> {
     pub fn new(config: Config) -> Self {
         let mut input_textarea = TextArea::default();
         input_textarea.set_placeholder_text("Type your query here...");
-        
+
         let action_textarea = TextArea::default();
-        
+
         // Check Python availability at startup
         let python_available = std::process::Command::new("python3")
             .arg("--version")
@@ -204,7 +210,8 @@ impl<'a> App<'a> {
     /// Clear the input textarea
     pub fn clear_input(&mut self) {
         self.input_textarea = TextArea::default();
-        self.input_textarea.set_placeholder_text("Type your query here...");
+        self.input_textarea
+            .set_placeholder_text("Type your query here...");
     }
 
     /// Clear the action textarea
@@ -236,21 +243,33 @@ impl<'a> App<'a> {
     /// Get usage statistics for current session
     pub fn get_usage_stats(&self) -> String {
         let total_messages = self.messages.len();
-        let user_messages = self.messages.iter().filter(|m| m.role == MessageRole::User).count();
-        let model_messages = self.messages.iter().filter(|m| m.role == MessageRole::Model).count();
-        let system_messages = self.messages.iter().filter(|m| m.role == MessageRole::System).count();
-        
+        let user_messages = self
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::User)
+            .count();
+        let model_messages = self
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Model)
+            .count();
+        let system_messages = self
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::System)
+            .count();
+
         // Estimate tokens (rough: ~4 chars per token)
         let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
         let estimated_tokens = total_chars / 4;
-        
+
         // Count images
         let images = self.messages.iter().filter(|m| m.image.is_some()).count();
-        
+
         // Gemini 2.5 Flash context window
         let context_limit = 1_000_000;
         let usage_percent = (estimated_tokens as f64 / context_limit as f64) * 100.0;
-        
+
         format!(
             "📊 Session Usage Stats\n\
              ─────────────────────\n\
@@ -277,31 +296,33 @@ impl<'a> App<'a> {
     /// Export chat history to markdown file
     pub fn export_to_markdown(&self, filename: &str) -> std::io::Result<()> {
         use std::io::Write;
-        
+
         let mut file = std::fs::File::create(filename)?;
-        
+
         writeln!(file, "# Sabi Chat Export")?;
-        writeln!(file, "\nSession: {} | Exported: {}\n", 
+        writeln!(
+            file,
+            "\nSession: {} | Exported: {}\n",
             self.current_session_id,
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
         )?;
         writeln!(file, "---\n")?;
-        
+
         for msg in &self.messages {
             let (prefix, role) = match msg.role {
                 MessageRole::User => ("👤", "User"),
                 MessageRole::Model => ("🤖", "Assistant"),
                 MessageRole::System => ("⚙️", "System"),
             };
-            
+
             writeln!(file, "## {} {}\n", prefix, role)?;
             writeln!(file, "{}\n", msg.content)?;
-            
+
             if msg.image.is_some() {
                 writeln!(file, "*[Image attached]*\n")?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -316,7 +337,7 @@ impl<'a> App<'a> {
     }
 
     /// Attempt a state transition
-    /// 
+    ///
     /// Returns true if the transition was successful, false otherwise.
     pub fn transition(&mut self, event: StateEvent) -> bool {
         match transition(self.state, event) {
@@ -333,41 +354,42 @@ impl<'a> App<'a> {
     }
 
     /// Submit the current input
-    /// 
+    ///
     /// Returns SubmitResult indicating what action to take
     pub fn submit_input(&mut self) -> SubmitResult {
         let is_empty = self.is_input_empty();
-        
+
         if is_empty && self.pending_image.is_none() {
             return SubmitResult::Empty;
         }
-        
+
         let input = self.get_input_text();
-        
+
         // Check for slash commands (but not if we have pending image)
         if input.starts_with('/') && self.pending_image.is_none() {
             self.clear_input();
             return self.handle_slash_command(&input);
         }
-        
+
         // Create message with or without image
         let msg = if let Some((_, img)) = self.pending_image.take() {
             // Remove the [📷 ...] marker from input
-            let clean_input = input.replace(|c: char| c == '[' || c == ']' || c == '📷', "")
+            let clean_input = input
+                .replace(|c: char| c == '[' || c == ']' || c == '📷', "")
                 .split_whitespace()
                 .filter(|s| !s.ends_with(".png") && !s.ends_with(".jpg"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let prompt = if clean_input.trim().is_empty() { 
-                "What's in this image?".to_string() 
-            } else { 
-                clean_input 
+            let prompt = if clean_input.trim().is_empty() {
+                "What's in this image?".to_string()
+            } else {
+                clean_input
             };
             Message::user_with_image(prompt, img)
         } else {
             Message::user(&input)
         };
-        
+
         self.add_message(msg);
         self.clear_input();
         self.transition(StateEvent::SubmitInput { is_empty: false });
@@ -383,7 +405,8 @@ impl<'a> App<'a> {
         match cmd.as_str() {
             "/clear" => {
                 // Keep only system prompt
-                self.messages.retain(|m| m.role == crate::message::MessageRole::System);
+                self.messages
+                    .retain(|m| m.role == crate::message::MessageRole::System);
                 self.add_message(Message::system("Chat cleared."));
                 SubmitResult::Handled
             }
@@ -400,7 +423,7 @@ impl<'a> App<'a> {
                      /export [file.md] - Export chat to markdown\n\
                      /clear - Clear chat history\n\
                      /help - Show this help\n\
-                     /quit - Exit application"
+                     /quit - Exit application",
                 ));
                 SubmitResult::Handled
             }
@@ -412,7 +435,9 @@ impl<'a> App<'a> {
             "/export" => {
                 let filename = arg.unwrap_or("chat_export.md");
                 match self.export_to_markdown(filename) {
-                    Ok(_) => self.add_message(Message::system(&format!("✓ Exported to {}", filename))),
+                    Ok(_) => {
+                        self.add_message(Message::system(&format!("✓ Exported to {}", filename)))
+                    }
                     Err(e) => self.add_message(Message::system(&format!("✗ Export failed: {}", e))),
                 }
                 SubmitResult::Handled
@@ -422,7 +447,7 @@ impl<'a> App<'a> {
                     let parts: Vec<&str> = args.splitn(2, ' ').collect();
                     let path = parts[0];
                     let prompt = parts.get(1).unwrap_or(&"What's in this image?");
-                    
+
                     match crate::message::ImageData::from_file(path) {
                         Ok(img) => {
                             self.add_message(Message::user_with_image(prompt.to_string(), img));
@@ -430,7 +455,10 @@ impl<'a> App<'a> {
                             return SubmitResult::Query;
                         }
                         Err(e) => {
-                            self.add_message(Message::system(&format!("Failed to load image: {}", e)));
+                            self.add_message(Message::system(&format!(
+                                "Failed to load image: {}",
+                                e
+                            )));
                         }
                     }
                 } else {
@@ -440,7 +468,10 @@ impl<'a> App<'a> {
             }
             "/new" => {
                 self.new_session();
-                self.add_message(Message::system(&format!("New session started: {}", self.current_session_id)));
+                self.add_message(Message::system(&format!(
+                    "New session started: {}",
+                    self.current_session_id
+                )));
                 SubmitResult::Handled
             }
             "/sessions" => {
@@ -448,10 +479,23 @@ impl<'a> App<'a> {
                 if sessions.is_empty() {
                     self.add_message(Message::system("No saved sessions."));
                 } else {
-                    let list: Vec<String> = sessions.iter().map(|s| {
-                        let marker = if s.id == self.current_session_id { "→ " } else { "  " };
-                        format!("{}{} | {} | {}", marker, s.id, s.timestamp.split('T').next().unwrap_or(""), s.preview())
-                    }).collect();
+                    let list: Vec<String> = sessions
+                        .iter()
+                        .map(|s| {
+                            let marker = if s.id == self.current_session_id {
+                                "→ "
+                            } else {
+                                "  "
+                            };
+                            format!(
+                                "{}{} | {} | {}",
+                                marker,
+                                s.id,
+                                s.timestamp.split('T').next().unwrap_or(""),
+                                s.preview()
+                            )
+                        })
+                        .collect();
                     self.add_message(Message::system(&format!("Sessions:\n{}", list.join("\n"))));
                 }
                 SubmitResult::Handled
@@ -459,8 +503,11 @@ impl<'a> App<'a> {
             "/switch" => {
                 if let Some(id) = arg {
                     match self.switch_session(id) {
-                        Ok(_) => self.add_message(Message::system(&format!("Switched to session: {}", id))),
-                        Err(e) => self.add_message(Message::system(&format!("Failed to switch: {}", e))),
+                        Ok(_) => self
+                            .add_message(Message::system(&format!("Switched to session: {}", id))),
+                        Err(e) => {
+                            self.add_message(Message::system(&format!("Failed to switch: {}", e)))
+                        }
                     }
                 } else {
                     self.add_message(Message::system("Usage: /switch <session_id>"));
@@ -470,11 +517,15 @@ impl<'a> App<'a> {
             "/delete" => {
                 if let Some(id) = arg {
                     if id == self.current_session_id {
-                        self.add_message(Message::system("Cannot delete current session. Switch first."));
+                        self.add_message(Message::system(
+                            "Cannot delete current session. Switch first.",
+                        ));
                     } else {
                         match Self::delete_session(id) {
-                            Ok(_) => self.add_message(Message::system(&format!("Deleted session: {}", id))),
-                            Err(e) => self.add_message(Message::system(&format!("Failed to delete: {}", e))),
+                            Ok(_) => self
+                                .add_message(Message::system(&format!("Deleted session: {}", id))),
+                            Err(e) => self
+                                .add_message(Message::system(&format!("Failed to delete: {}", e))),
                         }
                     }
                 } else {
@@ -482,15 +533,16 @@ impl<'a> App<'a> {
                 }
                 SubmitResult::Handled
             }
-            "/model" => {
-                SubmitResult::FetchModels(arg.map(String::from))
-            }
+            "/model" => SubmitResult::FetchModels(arg.map(String::from)),
             "/quit" | "/exit" | "/q" => {
                 self.should_quit = true;
                 SubmitResult::Quit
             }
             _ => {
-                self.add_message(Message::system(&format!("Unknown command: {}. Type /help for available commands.", cmd)));
+                self.add_message(Message::system(&format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    cmd
+                )));
                 SubmitResult::Handled
             }
         }
@@ -510,7 +562,8 @@ impl<'a> App<'a> {
         let json = std::fs::read_to_string(filename)?;
         let session: Session = serde_json::from_str(&json)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        self.messages.retain(|m| m.role == crate::message::MessageRole::System);
+        self.messages
+            .retain(|m| m.role == crate::message::MessageRole::System);
         self.messages.extend(session.messages);
         self.current_session_id = session.id;
         Ok(())
@@ -528,18 +581,23 @@ impl<'a> App<'a> {
 
     /// List all saved sessions
     pub fn list_sessions() -> Vec<Session> {
-        let Some(dir) = Self::sessions_dir() else { return Vec::new() };
-        let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
-        
+        let Some(dir) = Self::sessions_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+
         let mut sessions: Vec<Session> = entries
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
             .filter_map(|e| {
-                std::fs::read_to_string(e.path()).ok()
+                std::fs::read_to_string(e.path())
+                    .ok()
                     .and_then(|s| serde_json::from_str(&s).ok())
             })
             .collect();
-        
+
         sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         sessions
     }
@@ -558,7 +616,7 @@ impl<'a> App<'a> {
     pub fn switch_session(&mut self, id: &str) -> std::io::Result<()> {
         // Save current first
         self.save_current_session();
-        
+
         // Load new session
         let path = Self::session_path(id)
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Invalid path"))?;
@@ -577,7 +635,10 @@ impl<'a> App<'a> {
         if let Some(path) = Self::session_path(id) {
             std::fs::remove_file(path)
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Session not found"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Session not found",
+            ))
         }
     }
 
@@ -645,7 +706,10 @@ impl<'a> App<'a> {
                 match crate::message::ImageData::from_file(&path) {
                     Ok(img) => {
                         self.pending_image = Some((path.clone(), img));
-                        self.input_textarea.insert_str(&format!("[📷 {}] ", path.split('/').last().unwrap_or("image")));
+                        self.input_textarea.insert_str(&format!(
+                            "[📷 {}] ",
+                            path.split('/').last().unwrap_or("image")
+                        ));
                     }
                     Err(_) => {
                         self.input_textarea.insert_str("/image ");
@@ -656,16 +720,14 @@ impl<'a> App<'a> {
             }
             return InputResult::Handled;
         }
-        
+
         match key.code {
-            KeyCode::Enter => {
-                match self.submit_input() {
-                    SubmitResult::Query => InputResult::SubmitQuery,
-                    SubmitResult::Quit => InputResult::Quit,
-                    SubmitResult::FetchModels(model) => InputResult::FetchModels(model),
-                    _ => InputResult::Handled,
-                }
-            }
+            KeyCode::Enter => match self.submit_input() {
+                SubmitResult::Query => InputResult::SubmitQuery,
+                SubmitResult::Quit => InputResult::Quit,
+                SubmitResult::FetchModels(model) => InputResult::FetchModels(model),
+                _ => InputResult::Handled,
+            },
             KeyCode::Tab => {
                 // Autocomplete slash commands
                 let input = self.get_input_text();
@@ -678,7 +740,8 @@ impl<'a> App<'a> {
                         self.input_textarea.insert_char(' ');
                     } else if suggestions.len() > 1 {
                         // Multiple matches - show them
-                        let list = suggestions.iter()
+                        let list = suggestions
+                            .iter()
                             .map(|(cmd, desc)| format!("{} - {}", cmd, desc))
                             .collect::<Vec<_>>()
                             .join("\n");
@@ -707,18 +770,18 @@ impl<'a> App<'a> {
             }
         }
     }
-    
+
     /// Save clipboard image to temp file using arboard
     fn save_clipboard_image() -> Option<String> {
         let mut clipboard = arboard::Clipboard::new().ok()?;
         let image = clipboard.get_image().ok()?;
-        
+
         let temp_path = format!("/tmp/sabi_clip_{}.png", std::process::id());
-        
+
         // Encode RGBA to PNG and save
         let png_data = encode_rgba_to_png(image.width as u32, image.height as u32, &image.bytes);
         std::fs::write(&temp_path, png_data).ok()?;
-        
+
         Some(temp_path)
     }
 
@@ -748,7 +811,7 @@ impl<'a> App<'a> {
                             self.add_message(Message::system(
                                 "⚠️ DANGEROUS COMMAND DETECTED!\n\n\
                                  This command could cause irreversible damage.\n\
-                                 Press Enter again to proceed to final confirmation."
+                                 Press Enter again to proceed to final confirmation.",
                             ));
                             return InputResult::Ignored;
                         }
@@ -757,7 +820,7 @@ impl<'a> App<'a> {
                             self.add_message(Message::system(
                                 "🛑 FINAL CONFIRMATION REQUIRED\n\n\
                                  Type exactly: I understand the risks\n\n\
-                                 Then press Enter to execute, or Esc to cancel."
+                                 Then press Enter to execute, or Esc to cancel.",
                             ));
                             // Clear action textarea for user to type confirmation
                             self.action_textarea = TextArea::default();
@@ -776,7 +839,7 @@ impl<'a> App<'a> {
                             } else {
                                 self.add_message(Message::system(
                                     "❌ Confirmation text doesn't match.\n\
-                                     Type exactly: I understand the risks"
+                                     Type exactly: I understand the risks",
                                 ));
                                 return InputResult::Ignored;
                             }
@@ -784,7 +847,7 @@ impl<'a> App<'a> {
                         _ => {}
                     }
                 }
-                
+
                 // Normal command execution
                 let command = self.get_action_text();
                 if !command.is_empty() {
@@ -893,7 +956,6 @@ pub enum SubmitResult {
     FetchModels(Option<String>),
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,8 +968,11 @@ mod tests {
 
     // Strategy to generate whitespace-only strings
     fn whitespace_string() -> impl Strategy<Value = String> {
-        prop::collection::vec(prop_oneof![Just(' '), Just('\t'), Just('\n'), Just('\r')], 0..20)
-            .prop_map(|chars| chars.into_iter().collect())
+        prop::collection::vec(
+            prop_oneof![Just(' '), Just('\t'), Just('\n'), Just('\r')],
+            0..20,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
     }
 
     // **Feature: agent-rs, Property 1: Empty Input Rejection**
@@ -921,30 +986,30 @@ mod tests {
         #[test]
         fn prop_empty_input_rejection(whitespace in whitespace_string()) {
             let mut app = test_app();
-            
+
             // Ensure we start in Input state
             assert_eq!(app.state, AppState::Input);
             let initial_message_count = app.messages.len();
-            
+
             // Set the input to whitespace-only content
             app.input_textarea = TextArea::default();
             for ch in whitespace.chars() {
                 app.input_textarea.insert_char(ch);
             }
-            
+
             // Attempt to submit
             let submitted = app.submit_input();
-            
+
             // Property: submission should return Empty
             prop_assert_eq!(submitted, SubmitResult::Empty, "Whitespace-only input should not be submitted");
-            
+
             // Property: state should remain Input
             prop_assert_eq!(
-                app.state, 
+                app.state,
                 AppState::Input,
                 "State should remain Input after whitespace submission"
             );
-            
+
             // Property: message history should be unchanged
             prop_assert_eq!(
                 app.messages.len(),
@@ -956,23 +1021,23 @@ mod tests {
         #[test]
         fn prop_empty_string_rejection(_dummy in 0..1) {
             let mut app = test_app();
-            
+
             // Ensure we start in Input state with empty textarea
             assert_eq!(app.state, AppState::Input);
             let initial_message_count = app.messages.len();
-            
+
             // Input is already empty by default
             assert!(app.is_input_empty());
-            
+
             // Attempt to submit
             let submitted = app.submit_input();
-            
+
             // Property: submission should return Empty
             prop_assert_eq!(submitted, SubmitResult::Empty);
-            
+
             // Property: state should remain Input
             prop_assert_eq!(app.state, AppState::Input);
-            
+
             // Property: message history should be unchanged
             prop_assert_eq!(app.messages.len(), initial_message_count);
         }
@@ -981,24 +1046,24 @@ mod tests {
     #[test]
     fn test_is_input_empty_with_whitespace() {
         let mut app = test_app();
-        
+
         // Empty by default
         assert!(app.is_input_empty());
-        
+
         // Add spaces
         app.input_textarea.insert_str("   ");
         assert!(app.is_input_empty());
-        
+
         // Add tabs
         app.clear_input();
         app.input_textarea.insert_str("\t\t");
         assert!(app.is_input_empty());
-        
+
         // Add newlines
         app.clear_input();
         app.input_textarea.insert_str("\n\n");
         assert!(app.is_input_empty());
-        
+
         // Add actual content
         app.clear_input();
         app.input_textarea.insert_str("hello");
@@ -1008,8 +1073,7 @@ mod tests {
     // Strategy to generate non-empty, non-whitespace strings
     fn non_empty_string() -> impl Strategy<Value = String> {
         // Generate strings that have at least one non-whitespace character
-        ("[a-zA-Z0-9][a-zA-Z0-9 ]{0,50}", 1..52)
-            .prop_map(|(s, _)| s)
+        ("[a-zA-Z0-9][a-zA-Z0-9 ]{0,50}", 1..52).prop_map(|(s, _)| s)
     }
 
     // **Feature: agent-rs, Property 2: Valid Input State Transition**
@@ -1022,38 +1086,38 @@ mod tests {
         #[test]
         fn prop_valid_input_state_transition(input in non_empty_string()) {
             let mut app = test_app();
-            
+
             // Ensure we start in Input state
             assert_eq!(app.state, AppState::Input);
             let initial_message_count = app.messages.len();
-            
+
             // Set the input to non-empty content
             app.input_textarea = TextArea::default();
             app.input_textarea.insert_str(&input);
-            
+
             // Verify input is not empty
             prop_assert!(!app.is_input_empty(), "Input should not be empty: '{}'", input);
-            
+
             // Attempt to submit
             let submitted = app.submit_input();
-            
+
             // Property: submission should succeed (return Query)
             prop_assert_eq!(submitted, SubmitResult::Query, "Non-empty input should be submitted");
-            
+
             // Property: state should transition to Thinking
             prop_assert_eq!(
-                app.state, 
+                app.state,
                 AppState::Thinking,
                 "State should transition to Thinking after valid submission"
             );
-            
+
             // Property: message history should have one more message
             prop_assert_eq!(
                 app.messages.len(),
                 initial_message_count + 1,
                 "Message history should grow by 1 after valid submission"
             );
-            
+
             // Property: the new message should be a User message with the input content
             let last_message = app.messages.last().unwrap();
             prop_assert_eq!(last_message.role.clone(), crate::message::MessageRole::User);
@@ -1063,14 +1127,14 @@ mod tests {
         #[test]
         fn prop_input_cleared_after_submission(input in non_empty_string()) {
             let mut app = test_app();
-            
+
             // Set the input
             app.input_textarea = TextArea::default();
             app.input_textarea.insert_str(&input);
-            
+
             // Submit
             app.submit_input();
-            
+
             // Property: input should be cleared after submission
             prop_assert!(
                 app.is_input_empty(),
@@ -1082,13 +1146,13 @@ mod tests {
     #[test]
     fn test_valid_input_submission() {
         let mut app = test_app();
-        
+
         // Set valid input
         app.input_textarea.insert_str("list files");
-        
+
         // Submit
         let submitted = app.submit_input();
-        
+
         assert_eq!(submitted, SubmitResult::Query);
         assert_eq!(app.state, AppState::Thinking);
         assert_eq!(app.messages.len(), 1);
@@ -1110,34 +1174,34 @@ mod tests {
         #[test]
         fn prop_api_error_recovery_from_thinking(error_msg in arb_error_message()) {
             let mut app = test_app();
-            
+
             // First, get to Thinking state by submitting valid input
             app.input_textarea.insert_str("test query");
             app.submit_input();
-            
+
             // Verify we're in Thinking state
             prop_assert_eq!(app.state, AppState::Thinking);
-            
+
             // Simulate API error by setting error and transitioning
             app.set_error(&error_msg);
             let transitioned = app.transition(StateEvent::ApiError);
-            
+
             // Property: transition should succeed
             prop_assert!(transitioned, "API error transition should succeed from Thinking state");
-            
+
             // Property: state should be Input after API error
             prop_assert_eq!(
                 app.state,
                 AppState::Input,
                 "State should transition to Input after API error"
             );
-            
+
             // Property: error message should be set
             prop_assert!(
                 app.error_message.is_some(),
                 "Error message should be set after API error"
             );
-            
+
             // Property: error message should match what we set
             prop_assert_eq!(
                 app.error_message.as_ref().unwrap(),
@@ -1149,24 +1213,24 @@ mod tests {
         #[test]
         fn prop_api_error_recovery_from_finalizing(error_msg in arb_error_message()) {
             let mut app = test_app();
-            
+
             // Manually set state to Finalizing (simulating post-command execution)
             app.state = AppState::Finalizing;
-            
+
             // Simulate API error
             app.set_error(&error_msg);
             let transitioned = app.transition(StateEvent::ApiError);
-            
+
             // Property: transition should succeed
             prop_assert!(transitioned, "API error transition should succeed from Finalizing state");
-            
+
             // Property: state should be Input after API error
             prop_assert_eq!(
                 app.state,
                 AppState::Input,
                 "State should transition to Input after API error in Finalizing"
             );
-            
+
             // Property: error message should be set
             prop_assert!(
                 app.error_message.is_some(),
@@ -1180,18 +1244,18 @@ mod tests {
             error_msg in arb_error_message()
         ) {
             let mut app = test_app();
-            
+
             // Submit input to get to Thinking state
             app.input_textarea.insert_str(&input);
             app.submit_input();
-            
+
             // Record message count after submission
             let message_count = app.messages.len();
-            
+
             // Simulate API error
             app.set_error(&error_msg);
             app.transition(StateEvent::ApiError);
-            
+
             // Property: message history should be preserved (not cleared)
             prop_assert_eq!(
                 app.messages.len(),
@@ -1204,16 +1268,16 @@ mod tests {
     #[test]
     fn test_api_error_recovery() {
         let mut app = test_app();
-        
+
         // Get to Thinking state
         app.input_textarea.insert_str("test");
         app.submit_input();
         assert_eq!(app.state, AppState::Thinking);
-        
+
         // Simulate API error
         app.set_error("Network error");
         app.transition(StateEvent::ApiError);
-        
+
         // Should be back in Input state with error
         assert_eq!(app.state, AppState::Input);
         assert!(app.error_message.is_some());
@@ -1231,39 +1295,39 @@ mod tests {
         #[test]
         fn prop_review_action_enter_transitions_to_executing(command in non_empty_string()) {
             let mut app = test_app();
-            
+
             // Set up app in ReviewAction state with a command
             app.state = AppState::ReviewAction;
             app.action_textarea = TextArea::default();
             app.action_textarea.insert_str(&command);
-            
+
             // Verify we're in ReviewAction state
             prop_assert_eq!(app.state, AppState::ReviewAction);
-            
+
             // Simulate pressing Enter
             let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be ExecuteCommand
             prop_assert_eq!(
                 result,
                 InputResult::ExecuteCommand,
                 "Enter in ReviewAction should return ExecuteCommand"
             );
-            
+
             // Property: state should transition to Executing
             prop_assert_eq!(
                 app.state,
                 AppState::Executing,
                 "State should transition to Executing after Enter in ReviewAction"
             );
-            
+
             // Property: current_command should be set
             prop_assert!(
                 app.current_command.is_some(),
                 "current_command should be set after confirming"
             );
-            
+
             // Property: current_command should match the action text
             prop_assert_eq!(
                 app.current_command.as_ref().unwrap().trim(),
@@ -1275,40 +1339,40 @@ mod tests {
         #[test]
         fn prop_review_action_escape_transitions_to_input(command in non_empty_string()) {
             let mut app = test_app();
-            
+
             // Set up app in ReviewAction state with a command
             app.state = AppState::ReviewAction;
             app.action_textarea = TextArea::default();
             app.action_textarea.insert_str(&command);
-            
+
             // Verify we're in ReviewAction state with content
             prop_assert_eq!(app.state, AppState::ReviewAction);
             prop_assert!(!app.get_action_text().is_empty());
-            
+
             // Simulate pressing Escape
             let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be CancelCommand
             prop_assert_eq!(
                 result,
                 InputResult::CancelCommand,
                 "Escape in ReviewAction should return CancelCommand"
             );
-            
+
             // Property: state should transition to Input
             prop_assert_eq!(
                 app.state,
                 AppState::Input,
                 "State should transition to Input after Escape in ReviewAction"
             );
-            
+
             // Property: action_textarea should be cleared
             prop_assert!(
                 app.get_action_text().is_empty(),
                 "action_textarea should be cleared after Escape in ReviewAction"
             );
-            
+
             // Property: dangerous_command_detected should be reset
             prop_assert!(
                 !app.dangerous_command_detected,
@@ -1319,25 +1383,25 @@ mod tests {
         #[test]
         fn prop_review_action_empty_command_ignored(_dummy in 0..1) {
             let mut app = test_app();
-            
+
             // Set up app in ReviewAction state with empty command
             app.state = AppState::ReviewAction;
             app.action_textarea = TextArea::default();
-            
+
             // Verify action is empty
             prop_assert!(app.get_action_text().is_empty());
-            
+
             // Simulate pressing Enter
             let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be Ignored (can't execute empty command)
             prop_assert_eq!(
                 result,
                 InputResult::Ignored,
                 "Enter with empty command should be ignored"
             );
-            
+
             // Property: state should remain ReviewAction
             prop_assert_eq!(
                 app.state,
@@ -1352,33 +1416,33 @@ mod tests {
             additional_char in "[a-zA-Z0-9]"
         ) {
             let mut app = test_app();
-            
+
             // Set up app in ReviewAction state with a command
             app.state = AppState::ReviewAction;
             app.action_textarea = TextArea::default();
             app.action_textarea.insert_str(&initial_command);
-            
+
             let initial_len = app.get_action_text().len();
-            
+
             // Simulate typing a character
             let ch = additional_char.chars().next().unwrap();
             let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be Handled
             prop_assert_eq!(
                 result,
                 InputResult::Handled,
                 "Character input in ReviewAction should be handled"
             );
-            
+
             // Property: state should remain ReviewAction
             prop_assert_eq!(
                 app.state,
                 AppState::ReviewAction,
                 "State should remain ReviewAction during editing"
             );
-            
+
             // Property: action text should have grown
             prop_assert!(
                 app.get_action_text().len() > initial_len,
@@ -1390,15 +1454,15 @@ mod tests {
     #[test]
     fn test_review_action_enter_executes() {
         let mut app = test_app();
-        
+
         // Set up in ReviewAction state
         app.state = AppState::ReviewAction;
         app.action_textarea.insert_str("ls -la");
-        
+
         // Press Enter
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::ExecuteCommand);
         assert_eq!(app.state, AppState::Executing);
         assert_eq!(app.current_command, Some("ls -la".to_string()));
@@ -1407,16 +1471,16 @@ mod tests {
     #[test]
     fn test_review_action_escape_cancels() {
         let mut app = test_app();
-        
+
         // Set up in ReviewAction state
         app.state = AppState::ReviewAction;
         app.action_textarea.insert_str("rm -rf /");
         app.dangerous_command_detected = true;
-        
+
         // Press Escape
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::CancelCommand);
         assert_eq!(app.state, AppState::Input);
         assert!(app.get_action_text().is_empty());
@@ -1471,23 +1535,23 @@ mod tests {
             initial_action in "[a-zA-Z0-9]{0,20}",
         ) {
             let mut app = test_app();
-            
+
             // Set up initial content in textareas
             app.input_textarea = TextArea::default();
             app.input_textarea.insert_str(&initial_input);
             app.action_textarea = TextArea::default();
             app.action_textarea.insert_str(&initial_action);
-            
+
             // Set the async state
             app.state = state;
-            
+
             // Record initial content
             let input_before = app.get_input_text();
             let action_before = app.get_action_text();
-            
+
             // Handle the key event
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be Blocked
             prop_assert_eq!(
                 result,
@@ -1495,7 +1559,7 @@ mod tests {
                 "Non-escape keys should be blocked in {:?} state",
                 state
             );
-            
+
             // Property: input_textarea content should be unchanged
             prop_assert_eq!(
                 app.get_input_text(),
@@ -1503,7 +1567,7 @@ mod tests {
                 "input_textarea should not change in {:?} state",
                 state
             );
-            
+
             // Property: action_textarea content should be unchanged
             prop_assert_eq!(
                 app.get_action_text(),
@@ -1516,14 +1580,14 @@ mod tests {
         #[test]
         fn prop_escape_allowed_in_async_states(state in arb_async_state()) {
             let mut app = test_app();
-            
+
             // Set the async state
             app.state = state;
-            
+
             // Simulate pressing Escape
             let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be CancelCommand for Executing/Finalizing, Quit for Thinking
             match state {
                 AppState::Executing | AppState::Finalizing => {
@@ -1549,14 +1613,14 @@ mod tests {
         #[test]
         fn prop_ctrl_c_allowed_in_async_states(state in arb_async_state()) {
             let mut app = test_app();
-            
+
             // Set the async state
             app.state = state;
-            
+
             // Simulate pressing Ctrl+C
             let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
             let result = app.handle_key_event(key);
-            
+
             // Property: result should be Quit
             prop_assert_eq!(
                 result,
@@ -1564,7 +1628,7 @@ mod tests {
                 "Ctrl+C should allow quit in {:?} state",
                 state
             );
-            
+
             // Property: should_quit flag should be set
             prop_assert!(
                 app.should_quit,
@@ -1576,23 +1640,23 @@ mod tests {
         #[test]
         fn prop_thinking_state_blocks_input(key in arb_non_escape_key()) {
             let mut app = test_app();
-            
+
             // Get to Thinking state legitimately
             app.input_textarea.insert_str("test query");
             app.submit_input();
-            
+
             prop_assert_eq!(app.state, AppState::Thinking);
-            
+
             // Record initial state
             let input_before = app.get_input_text();
             let action_before = app.get_action_text();
-            
+
             // Try to input
             let result = app.handle_key_event(key);
-            
+
             // Property: should be blocked
             prop_assert_eq!(result, InputResult::Blocked);
-            
+
             // Property: content unchanged
             prop_assert_eq!(app.get_input_text(), input_before);
             prop_assert_eq!(app.get_action_text(), action_before);
@@ -1601,23 +1665,23 @@ mod tests {
         #[test]
         fn prop_finalizing_state_blocks_input(key in arb_non_escape_key()) {
             let mut app = test_app();
-            
+
             // Set to Finalizing state
             app.state = AppState::Finalizing;
-            
+
             // Add some content to verify it's not modified
             app.input_textarea.insert_str("previous input");
             app.action_textarea.insert_str("previous action");
-            
+
             let input_before = app.get_input_text();
             let action_before = app.get_action_text();
-            
+
             // Try to input
             let result = app.handle_key_event(key);
-            
+
             // Property: should be blocked
             prop_assert_eq!(result, InputResult::Blocked);
-            
+
             // Property: content unchanged
             prop_assert_eq!(app.get_input_text(), input_before);
             prop_assert_eq!(app.get_action_text(), action_before);
@@ -1627,16 +1691,16 @@ mod tests {
     #[test]
     fn test_thinking_blocks_character_input() {
         let mut app = test_app();
-        
+
         // Get to Thinking state
         app.input_textarea.insert_str("test");
         app.submit_input();
         assert_eq!(app.state, AppState::Thinking);
-        
+
         // Try to type a character
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::Blocked);
         assert!(app.get_input_text().is_empty()); // Was cleared on submit
     }
@@ -1644,16 +1708,16 @@ mod tests {
     #[test]
     fn test_thinking_allows_escape() {
         let mut app = test_app();
-        
+
         // Get to Thinking state
         app.input_textarea.insert_str("test");
         app.submit_input();
         assert_eq!(app.state, AppState::Thinking);
-        
+
         // Press Escape
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::Quit);
         assert!(app.should_quit);
     }
@@ -1661,28 +1725,28 @@ mod tests {
     #[test]
     fn test_executing_blocks_input() {
         let mut app = test_app();
-        
+
         // Set to Executing state
         app.state = AppState::Executing;
-        
+
         // Try to type
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::Blocked);
     }
 
     #[test]
     fn test_finalizing_blocks_input() {
         let mut app = test_app();
-        
+
         // Set to Finalizing state
         app.state = AppState::Finalizing;
-        
+
         // Try to press Enter
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::Blocked);
     }
 
@@ -1696,15 +1760,15 @@ mod tests {
         #[test]
         fn prop_command_displayed_in_review_action(command in "[a-zA-Z][a-zA-Z0-9 _\\-./]{0,50}") {
             let mut app = test_app();
-            
+
             // Simulate receiving a tool call and transitioning to ReviewAction
             app.state = AppState::Thinking;
             app.set_action_text(&command);
             app.transition(StateEvent::ToolCallReceived);
-            
+
             // Property: state should be ReviewAction
             prop_assert_eq!(app.state, AppState::ReviewAction);
-            
+
             // Property: action_textarea should contain the command
             let action_text = app.get_action_text();
             prop_assert_eq!(
@@ -1720,18 +1784,18 @@ mod tests {
             edit_char in "[a-zA-Z0-9]"
         ) {
             let mut app = test_app();
-            
+
             // Set up in ReviewAction with a command
             app.state = AppState::ReviewAction;
             app.set_action_text(&initial_command);
-            
+
             let initial_text = app.get_action_text();
-            
+
             // Type a character to edit
             let ch = edit_char.chars().next().unwrap();
             let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
             app.handle_key_event(key);
-            
+
             // Property: text should have changed (character added)
             prop_assert_ne!(
                 app.get_action_text(),
@@ -1755,12 +1819,12 @@ mod tests {
             exit_code in 0i32..128
         ) {
             let mut app = test_app();
-            
+
             // Set up state as if command was just executed
             app.state = AppState::Executing;
             app.current_command = Some(command.clone());
             let initial_count = app.messages.len();
-            
+
             // Simulate command completion feedback being added
             let feedback = format!(
                 "Command: {}\nExit code: {}\nOutput:\n{}",
@@ -1768,13 +1832,13 @@ mod tests {
             );
             app.add_message(crate::message::Message::user(&feedback));
             app.transition(StateEvent::CommandComplete);
-            
+
             // Property: message count should increase
             prop_assert!(
                 app.messages.len() > initial_count,
                 "Message history should grow after command completion"
             );
-            
+
             // Property: state should transition to Finalizing
             prop_assert_eq!(
                 app.state,
@@ -1788,22 +1852,22 @@ mod tests {
             ai_response in "[a-zA-Z0-9 ]{1,100}"
         ) {
             let mut app = test_app();
-            
+
             // Set up in Finalizing state
             app.state = AppState::Finalizing;
             let initial_count = app.messages.len();
-            
+
             // Simulate AI response
             app.add_message(crate::message::Message::model(&ai_response));
             app.transition(StateEvent::TextResponseReceived);
-            
+
             // Property: message count should increase
             prop_assert_eq!(
                 app.messages.len(),
                 initial_count + 1,
                 "AI response should be added to history"
             );
-            
+
             // Property: state should return to Input
             prop_assert_eq!(
                 app.state,
@@ -1824,10 +1888,10 @@ mod tests {
         fn prop_error_recovery_from_thinking(error_msg in "[a-zA-Z0-9 ]{1,50}") {
             let mut app = test_app();
             app.state = AppState::Thinking;
-            
+
             app.set_error(&error_msg);
             app.transition(StateEvent::ApiError);
-            
+
             prop_assert_eq!(app.state, AppState::Input);
             prop_assert!(app.error_message.is_some());
             prop_assert_eq!(app.error_message.as_ref().unwrap(), &error_msg);
@@ -1837,10 +1901,10 @@ mod tests {
         fn prop_error_recovery_from_finalizing(error_msg in "[a-zA-Z0-9 ]{1,50}") {
             let mut app = test_app();
             app.state = AppState::Finalizing;
-            
+
             app.set_error(&error_msg);
             app.transition(StateEvent::ApiError);
-            
+
             prop_assert_eq!(app.state, AppState::Input);
             prop_assert!(app.error_message.is_some());
         }
@@ -1851,16 +1915,16 @@ mod tests {
             error_msg in "[a-zA-Z0-9 ]{1,50}"
         ) {
             let mut app = test_app();
-            
+
             // Add some history
             app.add_message(crate::message::Message::user(&input));
             let history_count = app.messages.len();
-            
+
             // Simulate error in Thinking
             app.state = AppState::Thinking;
             app.set_error(&error_msg);
             app.transition(StateEvent::ApiError);
-            
+
             // Property: history should be preserved
             prop_assert_eq!(
                 app.messages.len(),
@@ -1875,14 +1939,14 @@ mod tests {
             new_input in non_empty_string()
         ) {
             let mut app = test_app();
-            
+
             // Set an error
             app.set_error(&error_msg);
             prop_assert!(app.error_message.is_some());
-            
+
             // Clear error explicitly (as would happen on new action)
             app.clear_error();
-            
+
             prop_assert!(
                 app.error_message.is_none(),
                 "Error should be clearable"
@@ -1893,14 +1957,14 @@ mod tests {
     #[test]
     fn test_react_loop_tool_call_to_review() {
         let mut app = test_app();
-        
+
         // Start in Thinking (after user submitted query)
         app.state = AppState::Thinking;
-        
+
         // Receive tool call
         app.set_action_text("ls -la");
         app.transition(StateEvent::ToolCallReceived);
-        
+
         assert_eq!(app.state, AppState::ReviewAction);
         assert_eq!(app.get_action_text(), "ls -la");
     }
@@ -1908,14 +1972,14 @@ mod tests {
     #[test]
     fn test_react_loop_text_response_to_input() {
         let mut app = test_app();
-        
+
         // Start in Thinking
         app.state = AppState::Thinking;
-        
+
         // Receive text response (no tool call)
         app.add_message(crate::message::Message::model("The answer is 42"));
         app.transition(StateEvent::TextResponseReceived);
-        
+
         assert_eq!(app.state, AppState::Input);
         assert_eq!(app.messages.last().unwrap().content, "The answer is 42");
     }
@@ -1923,43 +1987,45 @@ mod tests {
     #[test]
     fn test_react_loop_execute_to_finalizing() {
         let mut app = test_app();
-        
+
         // Start in Executing
         app.state = AppState::Executing;
         app.current_command = Some("echo test".to_string());
-        
+
         // Command completes
         app.execution_output = "test".to_string();
         app.transition(StateEvent::CommandComplete);
-        
+
         assert_eq!(app.state, AppState::Finalizing);
     }
 
     #[test]
     fn test_react_loop_finalizing_to_input() {
         let mut app = test_app();
-        
+
         // Start in Finalizing
         app.state = AppState::Finalizing;
-        
+
         // AI analysis completes with text response
-        app.add_message(crate::message::Message::model("Command executed successfully"));
+        app.add_message(crate::message::Message::model(
+            "Command executed successfully",
+        ));
         app.transition(StateEvent::TextResponseReceived);
-        
+
         assert_eq!(app.state, AppState::Input);
     }
 
     #[test]
     fn test_react_loop_finalizing_to_review_action() {
         let mut app = test_app();
-        
+
         // Start in Finalizing
         app.state = AppState::Finalizing;
-        
+
         // AI wants to run another command
         app.set_action_text("cat output.txt");
         app.transition(StateEvent::ToolCallReceived);
-        
+
         assert_eq!(app.state, AppState::ReviewAction);
         assert_eq!(app.get_action_text(), "cat output.txt");
     }
@@ -1980,7 +2046,7 @@ mod tests {
         ) {
             let mut app = test_app();
             let initial_count = app.messages.len();
-            
+
             // Add messages
             for (is_user, content) in &messages {
                 let msg = if *is_user {
@@ -1990,14 +2056,14 @@ mod tests {
                 };
                 app.add_message(msg);
             }
-            
+
             // Property: message count should increase by the number added
             prop_assert_eq!(
                 app.messages.len(),
                 initial_count + messages.len(),
                 "Message count should increase by number of messages added"
             );
-            
+
             // Property: messages should be in the same order
             for (i, (is_user, content)) in messages.iter().enumerate() {
                 let msg = &app.messages[initial_count + i];
@@ -2022,13 +2088,13 @@ mod tests {
             content in "[a-zA-Z0-9 ]{1,50}"
         ) {
             let mut app = test_app();
-            
+
             // Set scroll offset to non-zero
             app.scroll_offset = 10;
-            
+
             // Add a message
             app.add_message(crate::message::Message::user(&content));
-            
+
             // Property: scroll should reset to 0 (showing latest)
             prop_assert_eq!(
                 app.scroll_offset, 0,
@@ -2042,28 +2108,28 @@ mod tests {
             new_msg in "[a-zA-Z0-9 ]{1,50}"
         ) {
             let mut app = test_app();
-            
+
             // Add initial message
             app.add_message(crate::message::Message::user(&initial_msg));
             let first_count = app.messages.len();
-            
+
             // Add new message
             app.add_message(crate::message::Message::model(&new_msg));
-            
+
             // Property: previous messages should be preserved
             prop_assert_eq!(
                 app.messages.len(),
                 first_count + 1,
                 "Message count should increase by 1"
             );
-            
+
             // Property: first message should still be there
             prop_assert_eq!(
                 &app.messages[first_count - 1].content,
                 &initial_msg,
                 "Previous message should be preserved"
             );
-            
+
             // Property: new message should be last
             prop_assert_eq!(
                 &app.messages.last().unwrap().content,
@@ -2211,10 +2277,13 @@ mod tests {
         let s1 = Session::new();
         std::thread::sleep(std::time::Duration::from_millis(10));
         let s2 = Session::new();
-        
+
         assert!(!s1.id.is_empty(), "Session ID should not be empty");
         assert!(!s2.id.is_empty(), "Session ID should not be empty");
-        assert!(s1.messages.is_empty(), "New session should have no messages");
+        assert!(
+            s1.messages.is_empty(),
+            "New session should have no messages"
+        );
     }
 
     // **Feature: Sabi-TUI, Property: Session Preview**
@@ -2223,12 +2292,16 @@ mod tests {
     fn test_session_preview() {
         let mut session = Session::new();
         assert_eq!(session.preview(), "(empty)");
-        
-        session.messages.push(crate::message::Message::user("Hello world"));
+
+        session
+            .messages
+            .push(crate::message::Message::user("Hello world"));
         assert_eq!(session.preview(), "Hello world");
-        
+
         session.messages.clear();
-        session.messages.push(crate::message::Message::user("A".repeat(50).as_str()));
+        session
+            .messages
+            .push(crate::message::Message::user("A".repeat(50).as_str()));
         assert!(session.preview().ends_with("..."));
         assert!(session.preview().len() <= 43); // 40 + "..."
     }
@@ -2239,10 +2312,10 @@ mod tests {
     fn test_executing_state_esc_cancels() {
         let mut app = test_app();
         app.state = AppState::Executing;
-        
+
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::CancelCommand);
     }
 
@@ -2251,10 +2324,10 @@ mod tests {
     fn test_finalizing_state_esc_cancels() {
         let mut app = test_app();
         app.state = AppState::Finalizing;
-        
+
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         let result = app.handle_key_event(key);
-        
+
         assert_eq!(result, InputResult::CancelCommand);
     }
 
@@ -2264,16 +2337,19 @@ mod tests {
         let mut app = test_app();
         app.add_message(crate::message::Message::user("test"));
         app.add_message(crate::message::Message::model("response"));
-        
+
         let old_id = app.current_session_id.clone();
-        
+
         // Wait to ensure different timestamp
         std::thread::sleep(std::time::Duration::from_secs(1));
         app.new_session();
-        
+
         // Only system messages should remain
         assert!(app.messages.iter().all(|m| m.role == MessageRole::System));
-        assert_ne!(app.current_session_id, old_id, "Session ID should change after new_session");
+        assert_ne!(
+            app.current_session_id, old_id,
+            "Session ID should change after new_session"
+        );
     }
 
     // **Feature: Sabi-TUI, Property: Slash Command /new**
@@ -2281,9 +2357,9 @@ mod tests {
     fn test_slash_command_new() {
         let mut app = test_app();
         app.input_textarea.insert_str("/new");
-        
+
         let result = app.submit_input();
-        
+
         assert_eq!(result, SubmitResult::Handled);
     }
 
@@ -2292,9 +2368,9 @@ mod tests {
     fn test_slash_command_sessions() {
         let mut app = test_app();
         app.input_textarea.insert_str("/sessions");
-        
+
         let result = app.submit_input();
-        
+
         assert_eq!(result, SubmitResult::Handled);
     }
 
@@ -2303,12 +2379,15 @@ mod tests {
     fn test_slash_command_help() {
         let mut app = test_app();
         app.input_textarea.insert_str("/help");
-        
+
         let initial_count = app.messages.len();
         let result = app.submit_input();
-        
+
         assert_eq!(result, SubmitResult::Handled);
-        assert!(app.messages.len() > initial_count, "Help should add a message");
+        assert!(
+            app.messages.len() > initial_count,
+            "Help should add a message"
+        );
     }
 
     // **Feature: Sabi-TUI, Property: Slash Command /clear**
@@ -2317,13 +2396,15 @@ mod tests {
         let mut app = test_app();
         app.add_message(crate::message::Message::user("test"));
         app.add_message(crate::message::Message::model("response"));
-        
+
         app.input_textarea.insert_str("/clear");
         let result = app.submit_input();
-        
+
         assert_eq!(result, SubmitResult::Handled);
         // Should only have system messages + clear confirmation
-        let non_system: Vec<_> = app.messages.iter()
+        let non_system: Vec<_> = app
+            .messages
+            .iter()
             .filter(|m| m.role != MessageRole::System)
             .collect();
         assert!(non_system.is_empty() || non_system.len() == 1); // clear message might be system
@@ -2340,12 +2421,12 @@ mod tests {
             if known.iter().any(|k| cmd.starts_with(k)) {
                 return Ok(());
             }
-            
+
             let mut app = test_app();
             app.input_textarea.insert_str(&cmd);
-            
+
             let result = app.submit_input();
-            
+
             prop_assert_eq!(result, SubmitResult::Handled);
             // Should have added an "Unknown command" message
             prop_assert!(
@@ -2360,10 +2441,13 @@ mod tests {
     fn test_safe_mode_config() {
         let mut config = Config::default();
         assert!(!config.safe_mode, "Safe mode should be off by default");
-        
+
         config.safe_mode = true;
         let app = App::new(config);
-        assert!(app.config.safe_mode, "App should inherit safe_mode from config");
+        assert!(
+            app.config.safe_mode,
+            "App should inherit safe_mode from config"
+        );
     }
 
     // **Feature: Sabi-TUI, Property: Python Availability Check**
@@ -2378,17 +2462,17 @@ mod tests {
 /// Encode RGBA bytes to PNG format (minimal implementation)
 fn encode_rgba_to_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    
+
     // PNG signature
     out.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    
+
     // IHDR chunk
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&width.to_be_bytes());
     ihdr.extend_from_slice(&height.to_be_bytes());
     ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA
     write_png_chunk(&mut out, b"IHDR", &ihdr);
-    
+
     // IDAT chunk - raw image data with filter bytes
     let mut raw_data = Vec::new();
     for y in 0..height as usize {
@@ -2399,13 +2483,13 @@ fn encode_rgba_to_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
             raw_data.extend_from_slice(&rgba[row_start..row_end]);
         }
     }
-    
+
     let compressed = deflate_store(&raw_data);
     write_png_chunk(&mut out, b"IDAT", &compressed);
-    
+
     // IEND chunk
     write_png_chunk(&mut out, b"IEND", &[]);
-    
+
     out
 }
 
@@ -2422,7 +2506,11 @@ fn png_crc32(chunk_type: &[u8], data: &[u8]) -> u32 {
     for &byte in chunk_type.iter().chain(data.iter()) {
         crc ^= byte as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB88320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB88320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -2431,7 +2519,7 @@ fn png_crc32(chunk_type: &[u8], data: &[u8]) -> u32 {
 fn deflate_store(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&[0x78, 0x01]); // zlib header
-    
+
     for (i, chunk) in data.chunks(65535).enumerate() {
         let is_last = i == data.chunks(65535).count() - 1;
         out.push(if is_last { 0x01 } else { 0x00 });
@@ -2440,7 +2528,7 @@ fn deflate_store(data: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&(!len).to_le_bytes());
         out.extend_from_slice(chunk);
     }
-    
+
     // Adler-32
     let (mut a, mut b) = (1u32, 0u32);
     for &byte in data {

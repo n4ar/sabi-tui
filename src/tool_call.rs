@@ -96,7 +96,7 @@ impl ToolCall {
     /// Check if this tool targets a dangerous path
     pub fn has_dangerous_path(&self) -> bool {
         let paths_to_check = [&self.path, &self.directory, &self.command];
-        
+
         for path in paths_to_check {
             if path.is_empty() {
                 continue;
@@ -109,15 +109,17 @@ impl ToolCall {
             } else {
                 path.clone()
             };
-            
+
             for dangerous in DANGEROUS_PATHS {
-                if expanded.starts_with(dangerous) || expanded.contains(&format!(" {}", dangerous)) {
+                if expanded.starts_with(dangerous) || expanded.contains(&format!(" {}", dangerous))
+                {
                     return true;
                 }
             }
-            
+
             // Check for recursive delete patterns
-            if expanded.contains("rm ") && (expanded.contains(" -rf") || expanded.contains(" -fr")) {
+            if expanded.contains("rm ") && (expanded.contains(" -rf") || expanded.contains(" -fr"))
+            {
                 return true;
             }
         }
@@ -156,7 +158,6 @@ impl ToolCall {
 
         None
     }
-
 
     /// Try to parse the entire string as JSON
     fn try_parse_json(s: &str) -> Option<Self> {
@@ -320,15 +321,15 @@ mod tests {
         fn prop_tool_call_json_roundtrip(tool_call in arb_tool_call()) {
             // Serialize to JSON
             let json = serde_json::to_string(&tool_call).unwrap();
-            
+
             // Parse back using our parse function
             let parsed = ToolCall::parse(&json);
-            
+
             // Property: parsing should succeed
             prop_assert!(parsed.is_some(), "Failed to parse serialized ToolCall: {}", json);
-            
+
             let recovered = parsed.unwrap();
-            
+
             // Property: recovered ToolCall should equal original
             prop_assert_eq!(tool_call.tool, recovered.tool, "Tool name mismatch");
             prop_assert_eq!(tool_call.command, recovered.command, "Command mismatch");
@@ -338,10 +339,10 @@ mod tests {
         fn prop_tool_call_serde_roundtrip(tool_call in arb_tool_call()) {
             // Serialize to JSON
             let json = serde_json::to_string(&tool_call).unwrap();
-            
+
             // Deserialize back using serde directly
             let recovered: ToolCall = serde_json::from_str(&json).unwrap();
-            
+
             // Property: should be identical
             prop_assert_eq!(tool_call, recovered);
         }
@@ -351,15 +352,15 @@ mod tests {
             // Serialize to JSON and wrap in markdown code block
             let json = serde_json::to_string(&tool_call).unwrap();
             let markdown = format!("```json\n{}\n```", json);
-            
+
             // Parse from markdown
             let parsed = ToolCall::parse(&markdown);
-            
+
             // Property: parsing should succeed
             prop_assert!(parsed.is_some(), "Failed to parse markdown-wrapped ToolCall");
-            
+
             let recovered = parsed.unwrap();
-            
+
             // Property: recovered ToolCall should equal original
             prop_assert_eq!(tool_call.tool, recovered.tool);
             prop_assert_eq!(tool_call.command, recovered.command);
@@ -370,15 +371,15 @@ mod tests {
             // Serialize to JSON and embed in text
             let json = serde_json::to_string(&tool_call).unwrap();
             let embedded = format!("Here's the command: {}", json);
-            
+
             // Parse from embedded text
             let parsed = ToolCall::parse(&embedded);
-            
+
             // Property: parsing should succeed
             prop_assert!(parsed.is_some(), "Failed to parse embedded ToolCall");
-            
+
             let recovered = parsed.unwrap();
-            
+
             // Property: recovered ToolCall should equal original
             prop_assert_eq!(tool_call.tool, recovered.tool);
             prop_assert_eq!(tool_call.command, recovered.command);
@@ -411,7 +412,7 @@ mod tests {
         fn prop_non_tool_response_classified_as_text(text in arb_plain_text()) {
             // Parse the plain text response
             let parsed = ParsedResponse::parse(&text);
-            
+
             // Property: should be classified as TextResponse (not ToolCall)
             prop_assert!(
                 parsed.is_text_response(),
@@ -419,7 +420,7 @@ mod tests {
                 text,
                 parsed
             );
-            
+
             // Property: original text should be preserved
             prop_assert_eq!(
                 parsed.as_text_response().unwrap(),
@@ -432,10 +433,10 @@ mod tests {
         fn prop_invalid_json_classified_as_text(text in arb_plain_text()) {
             // Create invalid JSON-like strings
             let invalid_json = format!("{{\"invalid\": {}}}", text);
-            
+
             // Parse the invalid JSON
             let parsed = ParsedResponse::parse(&invalid_json);
-            
+
             // Property: invalid JSON should be classified as TextResponse
             prop_assert!(
                 parsed.is_text_response(),
@@ -448,16 +449,16 @@ mod tests {
         fn prop_tool_call_classified_correctly(tool_call in arb_tool_call()) {
             // Serialize to JSON
             let json = serde_json::to_string(&tool_call).unwrap();
-            
+
             // Parse the response
             let parsed = ParsedResponse::parse(&json);
-            
+
             // Property: should be classified as ToolCall
             prop_assert!(
                 parsed.is_tool_call(),
                 "Valid tool call JSON should be classified as ToolCall"
             );
-            
+
             // Property: tool call should match original
             let recovered = parsed.as_tool_call().unwrap();
             prop_assert_eq!(&tool_call.tool, &recovered.tool);
@@ -468,10 +469,10 @@ mod tests {
         fn prop_text_response_preserves_content(text in arb_plain_text()) {
             // Create a TextResponse directly
             let response = ParsedResponse::TextResponse(text.clone());
-            
+
             // Property: as_text_response should return the original text
             prop_assert_eq!(response.as_text_response(), Some(text.as_str()));
-            
+
             // Property: as_tool_call should return None
             prop_assert!(response.as_tool_call().is_none());
         }

@@ -1,0 +1,212 @@
+# Implementation Plan
+
+- [x] 1. Project Setup and Core Types
+  - [x] 1.1 Initialize Cargo project with Rust 2024 edition and dependencies
+    - Create `Cargo.toml` with: ratatui, tui-textarea, crossterm, tokio (full), reqwest (json), serde, serde_json, thiserror, anyhow, regex, toml, dirs
+    - Set up project structure with module files
+    - _Requirements: 7.1, 9.1_
+  - [x] 1.2 Implement Config struct and loading logic
+    - Create `src/config.rs` with Config struct, Default impl, and load() function
+    - Support `~/.config/agent-rs/config.toml` and environment variables
+    - Implement ConfigError type
+    - _Requirements: 2.1_
+  - [x] 1.3 Write property test for config loading precedence
+    - **Property 22: Config Loading Precedence**
+    - **Validates: Requirements 2.1**
+  - [x] 1.4 Implement Message and MessageRole types
+    - Create `src/message.rs` with Message struct and MessageRole enum
+    - Implement Serialize/Deserialize for Gemini API format
+    - _Requirements: 6.3, 6.4_
+  - [x] 1.5 Write property test for message serialization round-trip
+    - **Property 13: History Serialization Round-Trip**
+    - **Validates: Requirements 6.4**
+
+- [x] 2. State Machine Implementation
+  - [x] 2.1 Implement AppState enum and transition logic
+    - Create `src/state.rs` with AppState enum
+    - Implement pure transition functions (no IO)
+    - _Requirements: 7.1, 7.2_
+  - [x] 2.2 Write property test for state validity
+    - **Property 14: State Validity**
+    - **Validates: Requirements 7.1, 7.2**
+  - [x] 2.3 Implement App struct with all fields
+    - Create `src/app.rs` with App struct
+    - Initialize TextAreas for input and action
+    - Include dangerous_command_detected flag
+    - _Requirements: 1.1, 3.1, 7.1_
+  - [x] 2.4 Write property test for empty input rejection
+    - **Property 1: Empty Input Rejection**
+    - **Validates: Requirements 1.3**
+  - [x] 2.5 Write property test for valid input state transition
+    - **Property 2: Valid Input State Transition**
+    - **Validates: Requirements 1.2**
+
+- [x] 3. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 4. Tool Call Parsing
+  - [x] 4.1 Implement ToolCall struct and parsing logic
+    - Create ToolCall struct with tool and command fields
+    - Implement parse() to extract JSON from AI response
+    - Handle both raw JSON and markdown code blocks
+    - _Requirements: 2.2_
+  - [x] 4.2 Write property test for tool call parsing round-trip
+    - **Property 3: Tool Call Parsing Round-Trip**
+    - **Validates: Requirements 2.2**
+  - [x] 4.3 Implement non-tool response handling
+    - Add logic to detect when response is plain text vs tool call
+    - _Requirements: 2.3_
+  - [x] 4.4 Write property test for non-tool response handling
+    - **Property 4: Non-Tool Response Handling**
+    - **Validates: Requirements 2.3**
+
+- [x] 5. Command Execution
+  - [x] 5.1 Implement CommandExecutor with output truncation
+    - Create `src/executor.rs` with CommandExecutor struct
+    - Implement execute() using std::process::Command
+    - Add truncate_output() for safety limits
+    - _Requirements: 4.1, 4.2, 4.5_
+  - [x] 5.2 Write property test for command output capture
+    - **Property 9: Command Execution Output Capture**
+    - **Validates: Requirements 4.1, 4.2, 4.5**
+  - [x] 5.3 Write property test for output truncation safety
+    - **Property 19: Output Truncation Safety**
+    - **Validates: Requirements 4.2**
+  - [x] 5.4 Implement DangerousCommandDetector
+    - Add regex-based pattern matching for dangerous commands
+    - _Requirements: 3.5_
+  - [x] 5.5 Write property test for dangerous command detection
+    - **Property 20: Dangerous Command Detection**
+    - **Validates: Requirements 3.5**
+
+- [x] 6. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. Gemini API Integration
+  - [x] 7.1 Implement GeminiClient with sliding window
+    - Create `src/gemini.rs` with GeminiClient struct
+    - Implement chat() with async reqwest calls
+    - Add apply_sliding_window() for context management
+    - Define SYSTEM_PROMPT constant
+    - _Requirements: 2.1, 2.2, 5.1, 5.2_
+  - [x] 7.2 Write property test for sliding window history management
+    - **Property 21: Sliding Window History Management**
+    - **Validates: Requirements 6.4**
+  - [x] 7.3 Implement API error handling
+    - Add GeminiError type
+    - Handle network errors, rate limits, invalid responses
+    - _Requirements: 2.4_
+  - [x] 7.4 Write property test for API error recovery
+    - **Property 5: API Error Recovery**
+    - **Validates: Requirements 2.4**
+
+- [x] 8. Event Handling
+  - [x] 8.1 Implement Event enum and EventHandler
+    - Create `src/event.rs` with Event enum
+    - Implement async event loop with tokio channels
+    - Handle Key, Tick, Resize, ApiResponse, CommandComplete events
+    - _Requirements: 9.1, 9.2, 9.3, 9.4_
+  - [x] 8.2 Implement input handling for each state
+    - Route keyboard events based on current AppState
+    - Handle Enter/Escape in Input and ReviewAction states
+    - _Requirements: 1.2, 1.4, 3.3, 3.4_
+  - [x] 8.3 Write property test for ReviewAction state transitions
+    - **Property 8: ReviewAction State Transitions**
+    - **Validates: Requirements 3.3, 3.4**
+  - [x] 8.4 Write property test for input blocking in async states
+    - **Property 15: Input Blocking in Async States**
+    - **Validates: Requirements 7.3**
+
+- [x] 9. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 10. TUI Rendering
+  - [x] 10.1 Implement UI layout with ratatui
+    - Create `src/ui.rs` with render functions
+    - Layout: top pane (chat history), middle pane (command/output), bottom pane (status)
+    - _Requirements: 8.1, 8.2, 8.3, 8.4_
+  - [x] 10.2 Implement chat history rendering with scrolling
+    - Render messages with role-based styling (colors/prefixes)
+    - Enable scroll with arrow keys
+    - _Requirements: 6.1, 6.2, 6.3_
+  - [x] 10.3 Write property test for message role styling distinction
+    - **Property 12: Message Role Styling Distinction**
+    - **Validates: Requirements 6.3**
+  - [x] 10.4 Implement command box rendering with danger indicator
+    - Green border for normal commands
+    - Red blinking border for dangerous commands
+    - _Requirements: 3.1, 3.5_
+  - [x] 10.5 Implement spinner for Thinking/Finalizing states
+    - Animated spinner during API calls
+    - _Requirements: 2.5_
+  - [x] 10.6 Write property test for state-dependent middle pane rendering
+    - **Property 17: State-Dependent Middle Pane Rendering**
+    - **Validates: Requirements 8.2, 8.3**
+  - [x] 10.7 Write property test for responsive layout adaptation
+    - **Property 18: Responsive Layout Adaptation**
+    - **Validates: Requirements 8.5**
+
+- [x] 11. Main Application Loop
+  - [x] 11.1 Implement main.rs with async runtime
+    - Set up tokio runtime
+    - Initialize terminal with crossterm
+    - Load config and create App
+    - _Requirements: 1.1, 7.1_
+  - [x] 11.2 Implement main event loop
+    - Handle events with tokio::select!
+    - Dispatch to appropriate handlers based on state
+    - Render UI on each tick
+    - _Requirements: 9.4_
+  - [x] 11.3 Implement graceful shutdown
+    - Handle Ctrl+C and Escape
+    - Restore terminal state
+    - _Requirements: 1.4_
+
+- [x] 12. ReAct Loop Integration
+  - [x] 12.1 Wire up Input → Thinking transition
+    - Send user query to GeminiClient
+    - Transition to Thinking state
+    - _Requirements: 1.2, 2.1_
+  - [x] 12.2 Wire up Thinking → ReviewAction/Input transition
+    - Parse AI response for tool calls
+    - Populate action_textarea or add to history
+    - _Requirements: 2.2, 2.3_
+  - [x] 12.3 Write property test for command display in ReviewAction
+    - **Property 6: Command Display in ReviewAction**
+    - **Validates: Requirements 3.1**
+  - [x] 12.4 Wire up ReviewAction → Executing transition
+    - Execute confirmed command
+    - Capture output
+    - _Requirements: 3.3, 4.1_
+  - [x] 12.5 Wire up Executing → Finalizing → Input loop
+    - Send command output back to AI
+    - Display AI summary
+    - Return to Input state
+    - _Requirements: 5.1, 5.3, 5.4_
+  - [x] 12.6 Write property test for feedback loop consistency
+    - **Property 10: Feedback Loop Consistency**
+    - **Validates: Requirements 5.1, 5.2, 5.3**
+  - [x] 12.7 Write property test for error state recovery
+    - **Property 16: Error State Recovery**
+    - **Validates: Requirements 7.4**
+
+- [x] 13. Message History Management
+  - [x] 13.1 Implement message append and display
+    - Add messages to history vector
+    - Update scroll position
+    - _Requirements: 6.1_
+  - [x] 13.2 Write property test for message history append
+    - **Property 11: Message History Append**
+    - **Validates: Requirements 6.1**
+
+- [x] 14. Textarea Editing
+  - [x] 14.1 Integrate tui-textarea for input and action
+    - Configure textarea widgets
+    - Handle cursor movement and text editing
+    - _Requirements: 3.2_
+  - [x] 14.2 Write property test for textarea edit consistency
+    - **Property 7: Textarea Edit Consistency**
+    - **Validates: Requirements 3.2**
+
+- [ ] 15. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

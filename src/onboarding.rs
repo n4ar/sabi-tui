@@ -1,7 +1,7 @@
 //! First-run onboarding flow
 
-use std::io::{self, Write};
 use crate::config::{Config, Provider};
+use std::io::{self, Write};
 
 pub fn run_onboarding() -> io::Result<Config> {
     println!("\n🚀 Welcome to Sabi-TUI!\n");
@@ -27,13 +27,13 @@ pub fn run_onboarding() -> io::Result<Config> {
             input.clear();
             io::stdin().read_line(&mut input)?;
             let url = input.trim().to_string();
-            
+
             print!("Model name: ");
             io::stdout().flush()?;
             input.clear();
             io::stdin().read_line(&mut input)?;
             let model = input.trim().to_string();
-            
+
             (Provider::OpenAI, Some(url), model)
         }
         _ => (Provider::Gemini, None, "gemini-2.5-flash".into()),
@@ -45,7 +45,7 @@ pub fn run_onboarding() -> io::Result<Config> {
         (Provider::OpenAI, Some(_)) => "API key (leave empty if not required): ",
         (Provider::OpenAI, None) => "OpenAI API key: ",
     };
-    
+
     print!("{}", api_key_prompt);
     io::stdout().flush()?;
     input.clear();
@@ -59,7 +59,11 @@ pub fn run_onboarding() -> io::Result<Config> {
         input.clear();
         io::stdin().read_line(&mut input)?;
         let m = input.trim();
-        if m.is_empty() { default_model } else { m.to_string() }
+        if m.is_empty() {
+            default_model
+        } else {
+            m.to_string()
+        }
     } else {
         default_model
     };
@@ -73,8 +77,10 @@ pub fn run_onboarding() -> io::Result<Config> {
     };
 
     // Save config
-    config.save().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    
+    config
+        .save()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
     println!("\n✓ Configuration saved to ~/.sabi/config.toml");
     println!("  Run `sabi` to start!\n");
 

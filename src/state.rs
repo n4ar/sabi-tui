@@ -46,7 +46,10 @@ impl AppState {
 
     /// Check if this state blocks user input
     pub fn blocks_input(&self) -> bool {
-        matches!(self, AppState::Thinking | AppState::Finalizing | AppState::Executing)
+        matches!(
+            self,
+            AppState::Thinking | AppState::Finalizing | AppState::Executing
+        )
     }
 
     /// Check if this state shows a spinner
@@ -104,21 +107,17 @@ pub enum StateEvent {
 }
 
 /// Pure state transition function
-/// 
+///
 /// Given the current state and an event, returns the result of the transition.
 /// This function has no side effects and is fully testable.
 pub fn transition(current: AppState, event: StateEvent) -> TransitionResult {
     match (current, event) {
         // Input state transitions
-        (AppState::Input, StateEvent::SubmitInput { is_empty: true }) => {
-            TransitionResult::Ignored
-        }
+        (AppState::Input, StateEvent::SubmitInput { is_empty: true }) => TransitionResult::Ignored,
         (AppState::Input, StateEvent::SubmitInput { is_empty: false }) => {
             TransitionResult::Success(AppState::Thinking)
         }
-        (AppState::Input, StateEvent::Escape) => {
-            TransitionResult::Success(AppState::Done)
-        }
+        (AppState::Input, StateEvent::Escape) => TransitionResult::Success(AppState::Done),
 
         // Thinking state transitions
         (AppState::Thinking, StateEvent::ToolCallReceived) => {
@@ -127,9 +126,7 @@ pub fn transition(current: AppState, event: StateEvent) -> TransitionResult {
         (AppState::Thinking, StateEvent::TextResponseReceived) => {
             TransitionResult::Success(AppState::Input)
         }
-        (AppState::Thinking, StateEvent::ApiError) => {
-            TransitionResult::Success(AppState::Input)
-        }
+        (AppState::Thinking, StateEvent::ApiError) => TransitionResult::Success(AppState::Input),
 
         // ReviewAction state transitions
         (AppState::ReviewAction, StateEvent::ConfirmCommand) => {
@@ -138,9 +135,7 @@ pub fn transition(current: AppState, event: StateEvent) -> TransitionResult {
         (AppState::ReviewAction, StateEvent::CancelCommand) => {
             TransitionResult::Success(AppState::Input)
         }
-        (AppState::ReviewAction, StateEvent::Escape) => {
-            TransitionResult::Success(AppState::Input)
-        }
+        (AppState::ReviewAction, StateEvent::Escape) => TransitionResult::Success(AppState::Input),
 
         // Executing state transitions
         (AppState::Executing, StateEvent::CommandComplete) => {
@@ -157,22 +152,16 @@ pub fn transition(current: AppState, event: StateEvent) -> TransitionResult {
         (AppState::Finalizing, StateEvent::AnalysisComplete) => {
             TransitionResult::Success(AppState::Input)
         }
-        (AppState::Finalizing, StateEvent::ApiError) => {
-            TransitionResult::Success(AppState::Input)
-        }
+        (AppState::Finalizing, StateEvent::ApiError) => TransitionResult::Success(AppState::Input),
 
         // Done state transitions
-        (AppState::Done, StateEvent::Continue) => {
-            TransitionResult::Success(AppState::Input)
-        }
+        (AppState::Done, StateEvent::Continue) => TransitionResult::Success(AppState::Input),
 
         // Invalid transitions
-        (state, event) => {
-            TransitionResult::Error(format!(
-                "Invalid transition: {:?} with event {:?}",
-                state, event
-            ))
-        }
+        (state, event) => TransitionResult::Error(format!(
+            "Invalid transition: {:?} with event {:?}",
+            state, event
+        )),
     }
 }
 
@@ -300,7 +289,10 @@ mod tests {
 
     #[test]
     fn test_invalid_transition_returns_error() {
-        let result = transition(AppState::Executing, StateEvent::SubmitInput { is_empty: false });
+        let result = transition(
+            AppState::Executing,
+            StateEvent::SubmitInput { is_empty: false },
+        );
         assert!(matches!(result, TransitionResult::Error(_)));
     }
 
@@ -355,7 +347,7 @@ mod tests {
         ) {
             // Property: Any transition result that succeeds produces a valid state
             let result = transition(state, event);
-            
+
             match result {
                 TransitionResult::Success(new_state) => {
                     // The new state must be a valid variant
@@ -401,7 +393,7 @@ mod tests {
         ) {
             // Property: If a transition succeeds, it must be a valid transition
             let result = transition(state, event);
-            
+
             if let TransitionResult::Success(new_state) = result {
                 prop_assert!(
                     is_valid_transition(state, new_state),
