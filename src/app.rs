@@ -19,6 +19,9 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/sessions", "List all sessions"),
     ("/switch", "Switch to session: /switch <id>"),
     ("/delete", "Delete session: /delete <id>"),
+    ("/image", "Attach image: /image <path> [prompt]"),
+    ("/usage", "Show session token usage stats"),
+    ("/export", "Export chat: /export [filename.md]"),
     ("/help", "Show available commands"),
     ("/quit", "Exit application"),
 ];
@@ -117,6 +120,9 @@ pub struct App<'a> {
 
     /// Current session ID
     pub current_session_id: String,
+
+    /// Pending image to attach to next message
+    pub pending_image: Option<(String, crate::message::ImageData)>,
 }
 
 impl<'a> App<'a> {
@@ -151,6 +157,7 @@ impl<'a> App<'a> {
             python_available,
             running_task: None,
             current_session_id: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string(),
+            pending_image: None,
         }
     }
 
@@ -221,6 +228,78 @@ impl<'a> App<'a> {
         self.scroll_offset = 0;
     }
 
+    /// Get usage statistics for current session
+    pub fn get_usage_stats(&self) -> String {
+        let total_messages = self.messages.len();
+        let user_messages = self.messages.iter().filter(|m| m.role == MessageRole::User).count();
+        let model_messages = self.messages.iter().filter(|m| m.role == MessageRole::Model).count();
+        let system_messages = self.messages.iter().filter(|m| m.role == MessageRole::System).count();
+        
+        // Estimate tokens (rough: ~4 chars per token)
+        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
+        let estimated_tokens = total_chars / 4;
+        
+        // Count images
+        let images = self.messages.iter().filter(|m| m.image.is_some()).count();
+        
+        // Gemini 2.5 Flash context window
+        let context_limit = 1_000_000;
+        let usage_percent = (estimated_tokens as f64 / context_limit as f64) * 100.0;
+        
+        format!(
+            "📊 Session Usage Stats\n\
+             ─────────────────────\n\
+             Session ID: {}\n\
+             Messages: {} total\n\
+             • User: {}\n\
+             • AI: {}\n\
+             • System: {}\n\
+             Images: {}\n\
+             ─────────────────────\n\
+             Est. tokens: ~{}\n\
+             Context: {:.2}% of 1M",
+            self.current_session_id,
+            total_messages,
+            user_messages,
+            model_messages,
+            system_messages,
+            images,
+            estimated_tokens,
+            usage_percent
+        )
+    }
+
+    /// Export chat history to markdown file
+    pub fn export_to_markdown(&self, filename: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        
+        let mut file = std::fs::File::create(filename)?;
+        
+        writeln!(file, "# Sabi Chat Export")?;
+        writeln!(file, "\nSession: {} | Exported: {}\n", 
+            self.current_session_id,
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        )?;
+        writeln!(file, "---\n")?;
+        
+        for msg in &self.messages {
+            let (prefix, role) = match msg.role {
+                MessageRole::User => ("👤", "User"),
+                MessageRole::Model => ("🤖", "Assistant"),
+                MessageRole::System => ("⚙️", "System"),
+            };
+            
+            writeln!(file, "## {} {}\n", prefix, role)?;
+            writeln!(file, "{}\n", msg.content)?;
+            
+            if msg.image.is_some() {
+                writeln!(file, "*[Image attached]*\n")?;
+            }
+        }
+        
+        Ok(())
+    }
+
     /// Clear the error message
     pub fn clear_error(&mut self) {
         self.error_message = None;
@@ -254,19 +333,37 @@ impl<'a> App<'a> {
     pub fn submit_input(&mut self) -> SubmitResult {
         let is_empty = self.is_input_empty();
         
-        if is_empty {
+        if is_empty && self.pending_image.is_none() {
             return SubmitResult::Empty;
         }
         
         let input = self.get_input_text();
         
-        // Check for slash commands
-        if input.starts_with('/') {
+        // Check for slash commands (but not if we have pending image)
+        if input.starts_with('/') && self.pending_image.is_none() {
             self.clear_input();
             return self.handle_slash_command(&input);
         }
         
-        self.add_message(Message::user(&input));
+        // Create message with or without image
+        let msg = if let Some((_, img)) = self.pending_image.take() {
+            // Remove the [📷 ...] marker from input
+            let clean_input = input.replace(|c: char| c == '[' || c == ']' || c == '📷', "")
+                .split_whitespace()
+                .filter(|s| !s.ends_with(".png") && !s.ends_with(".jpg"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let prompt = if clean_input.trim().is_empty() { 
+                "What's in this image?".to_string() 
+            } else { 
+                clean_input 
+            };
+            Message::user_with_image(prompt, img)
+        } else {
+            Message::user(&input)
+        };
+        
+        self.add_message(msg);
         self.clear_input();
         self.transition(StateEvent::SubmitInput { is_empty: false });
         SubmitResult::Query
@@ -292,10 +389,47 @@ impl<'a> App<'a> {
                      /sessions - List all sessions\n\
                      /switch <id> - Switch to session\n\
                      /delete <id> - Delete session\n\
+                     /image <path> [prompt] - Analyze image\n\
+                     /usage - Show session stats\n\
+                     /export [file.md] - Export chat to markdown\n\
                      /clear - Clear chat history\n\
                      /help - Show this help\n\
                      /quit - Exit application"
                 ));
+                SubmitResult::Handled
+            }
+            "/usage" => {
+                let stats = self.get_usage_stats();
+                self.add_message(Message::system(&stats));
+                SubmitResult::Handled
+            }
+            "/export" => {
+                let filename = arg.unwrap_or("chat_export.md");
+                match self.export_to_markdown(filename) {
+                    Ok(_) => self.add_message(Message::system(&format!("✓ Exported to {}", filename))),
+                    Err(e) => self.add_message(Message::system(&format!("✗ Export failed: {}", e))),
+                }
+                SubmitResult::Handled
+            }
+            "/image" => {
+                if let Some(args) = arg {
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    let path = parts[0];
+                    let prompt = parts.get(1).unwrap_or(&"What's in this image?");
+                    
+                    match crate::message::ImageData::from_file(path) {
+                        Ok(img) => {
+                            self.add_message(Message::user_with_image(prompt.to_string(), img));
+                            self.transition(StateEvent::SubmitInput { is_empty: false });
+                            return SubmitResult::Query;
+                        }
+                        Err(e) => {
+                            self.add_message(Message::system(&format!("Failed to load image: {}", e)));
+                        }
+                    }
+                } else {
+                    self.add_message(Message::system("Usage: /image <path> [prompt]"));
+                }
                 SubmitResult::Handled
             }
             "/new" => {
@@ -495,6 +629,25 @@ impl<'a> App<'a> {
 
     /// Handle keyboard events in Input state
     fn handle_input_state(&mut self, key: KeyEvent) -> InputResult {
+        // Ctrl+O to attach image from clipboard (macOS) or prompt for path
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
+            if let Some(path) = Self::save_clipboard_image() {
+                // Load and attach image directly
+                match crate::message::ImageData::from_file(&path) {
+                    Ok(img) => {
+                        self.pending_image = Some((path.clone(), img));
+                        self.input_textarea.insert_str(&format!("[📷 {}] ", path.split('/').last().unwrap_or("image")));
+                    }
+                    Err(_) => {
+                        self.input_textarea.insert_str("/image ");
+                    }
+                }
+            } else {
+                self.input_textarea.insert_str("/image ");
+            }
+            return InputResult::Handled;
+        }
+        
         match key.code {
             KeyCode::Enter => {
                 match self.submit_input() {
@@ -522,6 +675,20 @@ impl<'a> App<'a> {
                 InputResult::Handled
             }
         }
+    }
+    
+    /// Save clipboard image to temp file using arboard
+    fn save_clipboard_image() -> Option<String> {
+        let mut clipboard = arboard::Clipboard::new().ok()?;
+        let image = clipboard.get_image().ok()?;
+        
+        let temp_path = format!("/tmp/sabi_clip_{}.png", std::process::id());
+        
+        // Encode RGBA to PNG and save
+        let png_data = encode_rgba_to_png(image.width as u32, image.height as u32, &image.bytes);
+        std::fs::write(&temp_path, png_data).ok()?;
+        
+        Some(temp_path)
     }
 
     /// Handle keyboard events in Thinking state (input blocked)
@@ -2118,4 +2285,80 @@ mod tests {
         // Just verify the field exists and is set
         let _ = app.python_available;
     }
+}
+
+/// Encode RGBA bytes to PNG format (minimal implementation)
+fn encode_rgba_to_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    
+    // PNG signature
+    out.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    
+    // IHDR chunk
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA
+    write_png_chunk(&mut out, b"IHDR", &ihdr);
+    
+    // IDAT chunk - raw image data with filter bytes
+    let mut raw_data = Vec::new();
+    for y in 0..height as usize {
+        raw_data.push(0); // filter: none
+        let row_start = y * width as usize * 4;
+        let row_end = row_start + width as usize * 4;
+        if row_end <= rgba.len() {
+            raw_data.extend_from_slice(&rgba[row_start..row_end]);
+        }
+    }
+    
+    let compressed = deflate_store(&raw_data);
+    write_png_chunk(&mut out, b"IDAT", &compressed);
+    
+    // IEND chunk
+    write_png_chunk(&mut out, b"IEND", &[]);
+    
+    out
+}
+
+fn write_png_chunk(out: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(chunk_type);
+    out.extend_from_slice(data);
+    let crc = png_crc32(chunk_type, data);
+    out.extend_from_slice(&crc.to_be_bytes());
+}
+
+fn png_crc32(chunk_type: &[u8], data: &[u8]) -> u32 {
+    let mut crc = 0xFFFFFFFFu32;
+    for &byte in chunk_type.iter().chain(data.iter()) {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB88320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+fn deflate_store(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x78, 0x01]); // zlib header
+    
+    for (i, chunk) in data.chunks(65535).enumerate() {
+        let is_last = i == data.chunks(65535).count() - 1;
+        out.push(if is_last { 0x01 } else { 0x00 });
+        let len = chunk.len() as u16;
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(&(!len).to_le_bytes());
+        out.extend_from_slice(chunk);
+    }
+    
+    // Adler-32
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in data {
+        a = (a + byte as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    out.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    out
 }

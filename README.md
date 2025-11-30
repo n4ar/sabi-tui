@@ -2,11 +2,14 @@
 
 A terminal-based AI agent implementing the ReAct (Reasoning + Acting) pattern for system administration. Describe tasks in natural language, review AI-generated shell commands, and get analysis of results.
 
+![Demo](demo.gif)
+
 ## Features
 
 - 🧠 **Gemini AI powered** - Natural language to shell command translation
 - 💻 **Terminal access** - Execute commands with safety checks
 - 🐍 **Python executor** - Run Python code for calculations (auto-detected)
+- 🖼️ **Image analysis** - Paste images from clipboard or file for AI analysis
 - 🔒 **Safe mode** - Preview commands without execution
 - 💾 **Multi-session** - Save and switch between conversation sessions
 - ⚠️ **Dangerous command detection** - Visual warnings for risky commands
@@ -114,6 +117,7 @@ sabi --help
 | `/sessions` | List all sessions |
 | `/switch <id>` | Switch to session |
 | `/delete <id>` | Delete session |
+| `/image <path> [prompt]` | Analyze image file |
 | `/clear` | Clear chat history |
 | `/help` | Show help |
 | `/quit` | Exit |
@@ -123,6 +127,7 @@ sabi --help
 | State | Key | Action |
 |-------|-----|--------|
 | Input | `Enter` | Submit query |
+| Input | `Ctrl+O` | Paste image from clipboard |
 | Input | `Esc` | Quit |
 | Input | `↑`/`↓` | Scroll history |
 | Review | `Enter` | Execute command |

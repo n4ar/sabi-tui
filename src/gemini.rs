@@ -193,21 +193,24 @@ impl GeminiClient {
             match msg.role {
                 MessageRole::System => {
                     system_instruction = Some(GeminiSystemInstruction {
-                        parts: vec![GeminiPart {
-                            text: msg.content.clone(),
-                        }],
+                        parts: vec![GeminiPart::text(&msg.content)],
                     });
                 }
                 _ => {
+                    let mut parts = vec![GeminiPart::text(&msg.content)];
+                    
+                    // Add image if present
+                    if let Some(ref img) = msg.image {
+                        parts.push(GeminiPart::image(img.mime_type.clone(), img.base64.clone()));
+                    }
+                    
                     contents.push(GeminiContent {
                         role: match msg.role {
                             MessageRole::User => "user".to_string(),
                             MessageRole::Model => "model".to_string(),
                             MessageRole::System => "user".to_string(),
                         },
-                        parts: vec![GeminiPart {
-                            text: msg.content.clone(),
-                        }],
+                        parts,
                     });
                 }
             }
@@ -230,7 +233,10 @@ impl GeminiClient {
             .content
             .parts
             .iter()
-            .map(|p| p.text.as_str())
+            .filter_map(|p| match p {
+                GeminiPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join("");
 
